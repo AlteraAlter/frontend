@@ -13,6 +13,7 @@ export function showTaskStatus({ hasTask, message } = {}) {
     const noTaskContainer = qs("#no-task-container");
     const statusTaskContainer = qs("#status-taks-container");
     if (!noTaskContainer || !statusTaskContainer) return;
+    if (typeof hasTask !== "boolean") return;
 
     if (hasTask) {
         const wasHidden = statusTaskContainer.style.display === "none" || !statusTaskContainer.style.display;
@@ -39,6 +40,7 @@ export function handleBackendStatusMessage(raw) {
         case "job_started": {
             const total = toNumber(payload.total);
             resetLiveJobRuntime({ total, processed: 0, success: 0, error: 0 });
+            liveJobRuntime.mode = "upload";
             if (Number.isFinite(total)) {
                 setMetricCardValue("totalProducts", total);
                 setMetricCardValue("success", 0);
@@ -145,14 +147,18 @@ export function handleBackendStatusMessage(raw) {
             const success = toNumber(payload.success);
             const failed = toNumber(payload.failed);
             const error = toNumber(payload.error);
+            const found = toNumber(payload.found);
+            const notFound = toNumber(payload.not_found);
             const resultCount = toNumber(payload.result_count);
             let remaining = null;
 
             if (Number.isFinite(total)) liveJobRuntime.total = total;
             if (Number.isFinite(processed)) liveJobRuntime.processed = processed;
             if (Number.isFinite(success)) liveJobRuntime.success = success;
+            else if (Number.isFinite(found)) liveJobRuntime.success = found;
             if (Number.isFinite(failed)) liveJobRuntime.error = failed;
             else if (Number.isFinite(error)) liveJobRuntime.error = error;
+            else if (Number.isFinite(notFound)) liveJobRuntime.error = notFound;
             else if (Number.isFinite(resultCount) && Number.isFinite(total)) {
                 liveJobRuntime.success = resultCount;
                 liveJobRuntime.error = Math.max(0, total - resultCount);
@@ -181,12 +187,19 @@ export function handleBackendStatusMessage(raw) {
             }
             setProgressBarRunning(false);
             showTaskStatus({ hasTask: true });
-            const completedResult = Array.isArray(payload.result) ? payload.result : null;
+            const completedResult = Array.isArray(payload.results)
+                ? payload.results
+                : (Array.isArray(payload.result) ? payload.result : null);
+            const completedPreview = normalizeCompletedPreviewRows(completedResult);
             return {
                 done: true,
-                previewPayload: completedResult || (liveJobRuntime.mode === "delete"
-                    ? [...liveJobRuntime.deleteRows]
-                    : [...liveJobRuntime.checkRows]),
+                previewPayload: completedPreview || (
+                    liveJobRuntime.mode === "delete"
+                        ? [...liveJobRuntime.deleteRows]
+                        : (liveJobRuntime.mode === "upload"
+                            ? liveJobRuntime.uploadRows.map(stripInternalRowFields)
+                            : [...liveJobRuntime.checkRows])
+                ),
             };
         }
         case "job_failed": {
@@ -228,14 +241,83 @@ export function handleBackendStatusMessage(raw) {
             return { done: false };
         }
         case "ean_completed": {
-            if (isTerminalStatus(payload.status) && !payload.ean) {
+            liveJobRuntime.mode = "upload";
+            const normalizedStatus = String(payload.status || "").toLowerCase();
+            const rawEan = payload.ean ?? payload.item?.ean;
+            const ean = String(rawEan || "").trim();
+            const countKey = ean || `__missing_ean_${liveJobRuntime.countedUploadEans.size + 1}`;
+            const isSuccess =
+                normalizedStatus === "success" ||
+                normalizedStatus === "done" ||
+                normalizedStatus === "completed";
+            const isError = normalizedStatus === "error" || normalizedStatus === "failed";
+
+            if (isSuccess || isError) {
+                const nextOutcome = isError ? "error" : "success";
+                const prevOutcome = liveJobRuntime.uploadOutcomeByEan.get(countKey);
+                if (!prevOutcome) {
+                    liveJobRuntime.uploadOutcomeByEan.set(countKey, nextOutcome);
+                    liveJobRuntime.countedUploadEans.add(countKey);
+                    if (nextOutcome === "success") liveJobRuntime.success += 1;
+                    if (nextOutcome === "error") liveJobRuntime.error += 1;
+                } else if (prevOutcome !== nextOutcome) {
+                    liveJobRuntime.uploadOutcomeByEan.set(countKey, nextOutcome);
+                    if (prevOutcome === "success") liveJobRuntime.success = Math.max(0, liveJobRuntime.success - 1);
+                    if (prevOutcome === "error") liveJobRuntime.error = Math.max(0, liveJobRuntime.error - 1);
+                    if (nextOutcome === "success") liveJobRuntime.success += 1;
+                    if (nextOutcome === "error") liveJobRuntime.error += 1;
+                }
+                if (Number.isFinite(liveJobRuntime.total) && liveJobRuntime.total > 0) {
+                    liveJobRuntime.processed = Math.min(liveJobRuntime.total, liveJobRuntime.uploadOutcomeByEan.size);
+                } else {
+                    liveJobRuntime.processed = liveJobRuntime.success + liveJobRuntime.error;
+                }
+            }
+
+            const item = payload.item && typeof payload.item === "object" ? payload.item : {};
+            const stage = String(payload.stage || "final").trim() || "final";
+            const rowKey = `${ean || "—"}:${stage}`;
+            const row = {
+                _key: rowKey,
+                ean: item.ean || ean || "—",
+                title: item.title || item.article || null,
+                article: item.article || null,
+                sku: item.sku || null,
+                price: item.price ?? null,
+                status: isSuccess ? "success" : (isError ? "error" : normalizedStatus || "error"),
+                stage: payload.stage || null,
+                message: payload.message || null,
+                detail: payload.detail || null,
+            };
+            const existingIdx = liveJobRuntime.uploadRows.findIndex((entry) => entry._key === rowKey);
+            if (existingIdx >= 0) {
+                liveJobRuntime.uploadRows[existingIdx] = row;
+            } else {
+                liveJobRuntime.uploadRows.push(row);
+            }
+
+            applyRuntimeMetrics();
+            if (Number.isFinite(liveJobRuntime.total) && liveJobRuntime.total > 0) {
+                setProgressBarProgress({
+                    processed: liveJobRuntime.processed,
+                    total: liveJobRuntime.total,
+                });
+            }
+
+            if (isTerminalStatus(payload.status) && !payload.ean && !payload.item?.ean) {
                 setProgressBarRunning(false);
-                return { done: true };
+                return {
+                    done: true,
+                    previewPayload: liveJobRuntime.uploadRows.map(stripInternalRowFields),
+                };
             }
             showTaskStatus({
                 hasTask: true,
             });
-            return { done: false };
+            return {
+                done: false,
+                previewPayload: liveJobRuntime.uploadRows.map(stripInternalRowFields),
+            };
         }
         default:
             return { done: false };
@@ -527,8 +609,11 @@ function createEmptyRuntime() {
         error: 0,
         countedEans: new Set(),
         countedStorefrontKeys: new Set(),
+        countedUploadEans: new Set(),
+        uploadOutcomeByEan: new Map(),
         checkRows: [],
         deleteRows: [],
+        uploadRows: [],
     };
 }
 
@@ -558,4 +643,89 @@ function applyRuntimeMetrics() {
         error: liveJobRuntime.error,
         queue: getRuntimeRemaining(),
     });
+}
+
+function stripInternalRowFields(row) {
+    if (!row || typeof row !== "object") return row;
+    const { _key, ...publicRow } = row;
+    return publicRow;
+}
+
+function normalizeCompletedPreviewRows(results) {
+    if (!Array.isArray(results)) return null;
+    if (results.length === 0) return [];
+
+    const hasCheckerShape = results.some((row) =>
+        row && typeof row === "object" &&
+        (Object.prototype.hasOwnProperty.call(row, "found") ||
+            Array.isArray(row.items) ||
+            Array.isArray(row.storefronts))
+    );
+    if (!hasCheckerShape) return results;
+
+    const rows = [];
+    results.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+        const ean = String(entry.ean || "").trim() || "—";
+        const found = entry.found === true;
+        const notFound = entry.found === false || String(entry.message || "").toLowerCase().includes("not found");
+        const items = Array.isArray(entry.items) ? entry.items : [];
+        const storefronts = Array.isArray(entry.storefronts) ? entry.storefronts : [];
+
+        if (found) {
+            const itemStorefronts = new Set();
+            items.forEach((item) => {
+                const storefront = String(item?.storefront || "").trim() || "—";
+                itemStorefronts.add(storefront);
+                rows.push({
+                    ...item,
+                    ean: String(item?.ean || ean),
+                    storefront,
+                    status: "exists",
+                });
+            });
+            storefronts.forEach((storefrontRaw) => {
+                const storefront = String(storefrontRaw || "").trim();
+                if (!storefront || itemStorefronts.has(storefront)) return;
+                rows.push({
+                    ean,
+                    title: null,
+                    price: null,
+                    storefront,
+                    status: "exists",
+                });
+            });
+            if (items.length === 0 && storefronts.length === 0) {
+                rows.push({
+                    ean,
+                    title: null,
+                    price: null,
+                    storefront: null,
+                    status: "exists",
+                });
+            }
+            return;
+        }
+
+        if (notFound) {
+            rows.push({
+                ean,
+                title: null,
+                price: null,
+                storefront: null,
+                status: "doesnt_exist",
+            });
+            return;
+        }
+
+        rows.push({
+            ean,
+            title: null,
+            price: null,
+            storefront: null,
+            status: "error",
+        });
+    });
+
+    return rows;
 }

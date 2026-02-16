@@ -92,6 +92,8 @@ export function setProgressBarRunning(isRunning) {
     }
     if (!progressNodes || !progressNodes.spinner) return;
     progressNodes.spinner.classList.toggle("is-paused", !isRunning);
+    progressNodes.spinner.classList.toggle("is-hidden", !isRunning);
+    progressNodes.spinner.setAttribute("aria-hidden", isRunning ? "false" : "true");
 }
 
 function getStatusNodes(container) {

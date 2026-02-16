@@ -7,6 +7,7 @@
     <title>Kaufland</title>
 
     <link rel="stylesheet" href="css/main.css" />
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 </head>
 
 <body>
@@ -256,6 +257,19 @@
                             class="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background placeholder:text-muted-foreground md:text-sm font-mono single-ean-input"
                             id="ean-input" placeholder="Например: 4006381333931" value="">
                     </div>
+                    <div class="space-y-2">
+                        <p class="text-sm font-medium leading-none">Контроллер</p>
+                        <div class="flex items-center gap-6">
+                            <label class="inline-flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="single-check-controller" id="single-controller-jv" value="jv" checked>
+                                <span class="font-medium">JV</span>
+                            </label>
+                            <label class="inline-flex items-center gap-2 cursor-pointer">
+                                <input type="radio" name="single-check-controller" id="single-controller-xl" value="xl">
+                                <span class="font-medium">XL</span>
+                            </label>
+                        </div>
+                    </div>
                     <div class="flex gap-2 single-check-actions">
                         <button
                             class="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-colors border border-input bg-background hover:bg-accent hover:text-accent-foreground h-10 px-4 py-2 flex-1 single-back-btn"
@@ -471,7 +485,7 @@
                     </div>
                 </div>
                 <div class="space-y-6" id="status-taks-container">
-                    <div class="bg-card rounded-lg border p-6" id="progressBarContainer">
+                    <div class="bg-card rounded-lg border mb-8 p-6" id="progressBarContainer">
                         <div class="flex items-center justify-between mb-4">
                             <div class="flex items-center gap-2">
                                 <h3 class="text-h3 text-foreground">Прогресс обработки</h3>

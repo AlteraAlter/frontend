@@ -26,6 +26,8 @@ export function initCheckModal() {
     const singleBackBtn = qs("#singleBackBtn");
     const singleInput = qs("#ean-input");
     const singleSubmit = qs("#singleCheckSubmit");
+    const singleControllerJv = qs("#single-controller-jv");
+    const singleControllerXl = qs("#single-controller-xl");
 
     const multipleModal = qs("#multiple-check-modal");
     const multipleDialog = qs("#multiple-check-dialog");
@@ -120,19 +122,28 @@ export function initCheckModal() {
     }
 
     if (singleInput && singleSubmit) {
+        const getSingleController = () => {
+            if (singleControllerXl?.checked) return "xl";
+            return "jv";
+        };
+
         const updateSingleState = () => {
             const value = singleInput.value.trim();
             const normalized = value.replace(/\s+/g, "");
-            const isValid = normalized.length > 0 && /^\d+$/.test(normalized);
+            const controller = getSingleController();
+            const isValid = normalized.length > 0 && /^\d+$/.test(normalized) && Boolean(controller);
             singleSubmit.disabled = !isValid;
         };
 
         singleInput.addEventListener("input", updateSingleState);
+        singleControllerJv?.addEventListener("change", updateSingleState);
+        singleControllerXl?.addEventListener("change", updateSingleState);
         updateSingleState();
 
         singleSubmit.addEventListener("click", async () => {
             const value = singleInput.value.trim();
             const normalized = value.replace(/\s+/g, "");
+            const controller = getSingleController();
             if (!normalized || !/^\d+$/.test(normalized)) {
                 singleSubmit.disabled = true;
                 return;
@@ -156,6 +167,7 @@ export function initCheckModal() {
             try {
                 const response = await sendEanRequest({
                     ean: normalized,
+                    controllers: [controller],
                     token: localStorage.getItem("jwt_access"),
                 });
                 const responseBody = await parseResponseBody(response);
@@ -209,25 +221,94 @@ async function parseResponseBody(response) {
 function resolveSingleCheckPreviewPayload(responseBody, fallbackEan) {
     if (Array.isArray(responseBody)) return responseBody;
     if (responseBody && typeof responseBody === "object") {
+        if (Array.isArray(responseBody.results)) {
+            return normalizeSingleCheckResults(responseBody.results, fallbackEan);
+        }
         if (Array.isArray(responseBody.result)) {
-            if (responseBody.result.length > 0) return responseBody.result;
-            return [{
-                ean: fallbackEan,
-                title: null,
-                price: null,
-                storefront: null,
-                status: "not_found",
-            }];
+            return normalizeSingleCheckResults(responseBody.result, fallbackEan);
         }
         if (responseBody.ean || responseBody.title || responseBody.price || responseBody.storefront) {
             return [responseBody];
         }
     }
-    return [{
-        ean: fallbackEan,
+    return [buildNotFoundRow(fallbackEan)];
+}
+
+function normalizeSingleCheckResults(results, fallbackEan) {
+    if (!Array.isArray(results) || results.length === 0) {
+        return [buildNotFoundRow(fallbackEan)];
+    }
+
+    const rows = [];
+
+    results.forEach((entry) => {
+        if (!entry || typeof entry !== "object") return;
+
+        const ean = String(entry.ean || fallbackEan || "").trim() || fallbackEan;
+        const found = entry.found === true;
+        const notFound =
+            entry.found === false ||
+            String(entry.message || "").toLowerCase().includes("not found");
+        const items = Array.isArray(entry.items) ? entry.items : [];
+        const storefronts = Array.isArray(entry.storefronts) ? entry.storefronts : [];
+
+        if (found) {
+            const seenStorefronts = new Set();
+            items.forEach((item) => {
+                const storefront = String(item?.storefront || "").trim() || "—";
+                seenStorefronts.add(storefront);
+                rows.push({
+                    ean: String(item?.ean || ean || fallbackEan),
+                    storefront,
+                    title: item?.title ?? null,
+                    price: item?.price ?? null,
+                    status: "exists",
+                });
+            });
+
+            storefronts.forEach((storefrontRaw) => {
+                const storefront = String(storefrontRaw || "").trim();
+                if (!storefront || seenStorefronts.has(storefront)) return;
+                rows.push({
+                    ean: ean || fallbackEan,
+                    storefront,
+                    title: null,
+                    price: null,
+                    status: "exists",
+                });
+            });
+
+            if (items.length === 0 && storefronts.length === 0) {
+                rows.push({
+                    ean: ean || fallbackEan,
+                    storefront: null,
+                    title: null,
+                    price: null,
+                    status: "exists",
+                });
+            }
+            return;
+        }
+
+        rows.push({
+            ean: ean || fallbackEan,
+            storefront: null,
+            title: null,
+            price: null,
+            status: notFound ? "doesnt_exist" : "error",
+        });
+    });
+
+    if (rows.length > 0) return rows;
+    return [buildNotFoundRow(fallbackEan)];
+}
+
+function buildNotFoundRow(ean) {
+    return {
+        ean: String(ean || "").trim() || "—",
         title: null,
         price: null,
         storefront: null,
-        status: "not_found",
-    }];
+        status: "doesnt_exist",
+    };
 }

@@ -253,7 +253,7 @@ async function sendRequest({
     }
 
     const initProgressSocket = getProgressSocketInitializer(operation);
-    const usePostJobIdFlow = operation === "check" || operation === "delete";
+    const usePostJobIdFlow = operation === "delete";
     const requestJobId = usePostJobIdFlow ? null : crypto.randomUUID();
     let progressSocket = null;
     if (!usePostJobIdFlow) {
@@ -277,7 +277,7 @@ async function sendRequest({
             throw new Error(`Request failed with status ${code}`);
         }
 
-        if (!usePostJobIdFlow) {
+        if (!usePostJobIdFlow && operation !== "check") {
             renderBackendResponsePreview({
                 operation,
                 payload: resolvePreviewPayload(responseBody),
@@ -285,12 +285,6 @@ async function sendRequest({
         }
 
         if (usePostJobIdFlow) {
-            if (operation === "check") {
-                const startTotal = getCheckerStartTotal(responseBody);
-                if (Number.isFinite(startTotal) && startTotal > 0) {
-                    resetTaskUi({ total: startTotal, running: true });
-                }
-            }
             const wsJobId = extractWsJobId(responseBody);
             if (wsJobId) {
                 clearBackendResponsePreview();
@@ -313,8 +307,8 @@ async function sendRequest({
         if (statusNode) statusNode.textContent = "Ошибка отправки файла";
         setProgressBarRunning(false);
         showTaskStatus({
-            task: mapOperationLabel(operation),
-            status: "Ошибка отправки файла",
+            hasTask: true,
+            message: "Ошибка отправки файла",
         });
         if (progressSocket && progressSocket.readyState === WebSocket.OPEN) {
             progressSocket.close();
@@ -383,8 +377,8 @@ function createProgressSocketHandlers({ operation, jobId }) {
         onError: () => {
             setProgressBarRunning(false);
             showTaskStatus({
-                task: mapOperationLabel(operation),
-                status: "Ошибка соединения",
+                hasTask: true,
+                message: "Ошибка соединения",
             });
         },
     };
@@ -401,10 +395,4 @@ function resolvePreviewPayload(responseBody) {
     if (!responseBody || typeof responseBody !== "object") return responseBody;
     if (Array.isArray(responseBody.result)) return responseBody.result;
     return responseBody;
-}
-
-function getCheckerStartTotal(responseBody) {
-    if (!responseBody || typeof responseBody !== "object") return null;
-    if (Array.isArray(responseBody.eans)) return responseBody.eans.length;
-    return null;
 }

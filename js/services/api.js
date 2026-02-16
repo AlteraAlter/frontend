@@ -14,6 +14,7 @@ const OPERATION_CONFIG = {
         endpoint: ENDPOINTS.check,
         buildFormData: (formData, file, jobId, controllers) => {
             formData.append("file", file);
+            appendJobId(formData, jobId);
             formData.append("mode", "checker");
             appendController(formData, controllers);
         },
@@ -49,10 +50,11 @@ export async function sendFileRequest({ operation, file, token, jobId, controlle
     return response;
 }
 
-export async function sendEanRequest({ ean, token }) {
+export async function sendEanRequest({ ean, token, controllers = [] }) {
     if (!ean) return null;
+    const selected = Array.isArray(controllers) ? controllers.find(Boolean) : null;
     const payload = {
-        controller: "jv",
+        controller: selected || "jv",
         mode: "checker",
         ean: String(ean),
     };
