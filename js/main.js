@@ -5,6 +5,7 @@ import { initDeleteModal } from "./modules/modals/deleteModal.js";
 import { renderMetricCards } from "./ui/cards.js";
 import { initLogsPanel } from "./ui/logsPanel.js";
 
+// Bootstraps all UI modules once the static page is ready.
 document.addEventListener("DOMContentLoaded", () => {
     initAuthModal();
     initUploadModal();

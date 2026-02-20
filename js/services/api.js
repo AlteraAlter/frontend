@@ -1,5 +1,6 @@
 import { ENDPOINTS } from "../core/config.js";
 
+// Central mapping for each bulk operation to backend endpoint + payload builder.
 const OPERATION_CONFIG = {
     upload: {
         endpoint: ENDPOINTS.upload,
@@ -83,11 +84,13 @@ export async function stopJobRequest({ jobId, token }) {
     return response;
 }
 
+// Upload/check flows may include client-side job_id so websocket updates can be attached immediately.
 function appendJobId(formData, jobId) {
     if (!jobId) return;
     formData.append("job_id", jobId);
 }
 
+// Backend accepts one controller value; UI keeps it as an array for shared modal logic.
 function appendController(formData, controllers) {
     const selected = Array.isArray(controllers) ? controllers.find(Boolean) : null;
     formData.append("controller", selected || "jv");

@@ -19,6 +19,7 @@ import { addLog } from "./logsPanel.js";
 let activeTask = null;
 let stopButtonBound = false;
 
+// Shared uploader/checker/deleter file flow used by all action modals.
 export function initFileSelect({
     fileSelectionContainer,
     fileInputSelector = "#file-upload",
@@ -65,6 +66,7 @@ export function initFileSelect({
                 </div>`
             : "";
 
+        // Replaces dropzone with an explicit confirmation step before network requests.
         fileSelectionContainer.innerHTML = `
             <div class="space-y-4" id="confirm-action-container">
                 <div class="p-4 bg-secondary border rounded-lg" id="confirmContainer">
@@ -250,6 +252,7 @@ async function sendRequest({
     }
 
     const initProgressSocket = getProgressSocketInitializer(operation);
+    // Delete receives job_id from backend response, upload/check generate it client-side.
     const usePostJobIdFlow = operation === "delete";
     const requestJobId = usePostJobIdFlow ? null : crypto.randomUUID();
     let progressSocket = null;
@@ -378,6 +381,7 @@ function createProgressSocketHandlers({ operation, jobId }) {
             const data = await normalizeWsData(event.data);
             const result = handleBackendStatusMessage(data);
             if (Object.prototype.hasOwnProperty.call(result || {}, "previewPayload")) {
+                // Keep the "backend response preview" table in sync with incremental websocket events.
                 if (
                     (operation === "upload" || operation === "delete") &&
                     Array.isArray(result.previewPayload) &&

@@ -31,6 +31,7 @@ function buildWsUrl(path, suffix) {
     let url = isFullUrl ? path : `${base}${normalizedPath}`;
 
     if (suffix) {
+        // Current backend contract expects job_id in query string for upload progress channel.
         const cleanSuffix = String(suffix).replace(/^\/+|\/+$/g, "");
         url = `${url.replace(/\/+$/g, "")}/?job_id=${cleanSuffix}`;
     } else {
