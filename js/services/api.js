@@ -70,6 +70,19 @@ export async function sendEanRequest({ ean, token, controllers = [] }) {
     return response;
 }
 
+export async function stopJobRequest({ jobId, token }) {
+    if (!jobId) return null;
+    const response = await fetch(ENDPOINTS.stopJob, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ job_id: String(jobId) }),
+    });
+    return response;
+}
+
 function appendJobId(formData, jobId) {
     if (!jobId) return;
     formData.append("job_id", jobId);

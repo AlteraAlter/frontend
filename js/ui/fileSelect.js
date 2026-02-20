@@ -1,11 +1,10 @@
-import { sendFileRequest, getOperationConfig } from "../services/api.js";
+import { sendFileRequest, getOperationConfig, stopJobRequest } from "../services/api.js";
 import { initUploadProgressSocket } from "../modules/ws/uploadProgressSocket.js";
 import { initCheckProgressSocket } from "../modules/ws/checkProgressSocket.js";
 import { initDeleteProgressSocket } from "../modules/ws/deleteProgressSocket.js";
 import {
     applyTaskSummaryFromResponse,
     mapOperationLabel,
-    resetTaskUi,
     showTaskStatus,
     handleBackendStatusMessage,
 } from "./taskStatus.js";
@@ -15,6 +14,10 @@ import {
     clearBackendResponsePreview,
     renderBackendResponsePreview,
 } from "./backendResponsePreview.js";
+import { addLog } from "./logsPanel.js";
+
+let activeTask = null;
+let stopButtonBound = false;
 
 export function initFileSelect({
     fileSelectionContainer,
@@ -37,7 +40,7 @@ export function initFileSelect({
         ? fileSelectionContainer.querySelector(`#${floatingCloseButtonId}`)?.outerHTML || ""
         : "";
     let selectedFile = null;
-    let selectedControllers = ["jv"];
+    let selectedController = "jv";
 
     const renderConfirm = (fileName) => {
         const showControllerSelect =
@@ -46,20 +49,19 @@ export function initFileSelect({
                 fileSelectionContainer.getAttribute("modal-type") === "delete" ||
                 fileSelectionContainer.getAttribute("modal-type") === "check");
 
-        if (showControllerSelect && selectedControllers.length > 1) {
-            selectedControllers = [selectedControllers[0]];
-        }
-
         const controllerMarkup = showControllerSelect
-            ? `<div class="flex items-center gap-6">
-                    <label class="inline-flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" id="controller-jv" value="jv" ${selectedControllers.includes("jv") ? "checked" : ""}>
-                        <span class="font-medium">JV</span>
-                    </label>
-                    <label class="inline-flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox" id="controller-xl" value="xl" ${selectedControllers.includes("xl") ? "checked" : ""}>
-                        <span class="font-medium">XL</span>
-                    </label>
+            ? `<div class="space-y-2">
+                    <p class="text-sm font-medium leading-none">Контроллер</p>
+                    <div class="flex items-center gap-6 controller-radio-group">
+                        <label class="inline-flex items-center gap-2 cursor-pointer controller-radio-option">
+                            <input type="radio" name="bulk-controller" id="controller-jv" value="jv" ${selectedController === "jv" ? "checked" : ""}>
+                            <span class="font-medium">JV</span>
+                        </label>
+                        <label class="inline-flex items-center gap-2 cursor-pointer controller-radio-option">
+                            <input type="radio" name="bulk-controller" id="controller-xl" value="xl" ${selectedController === "xl" ? "checked" : ""}>
+                            <span class="font-medium">XL</span>
+                        </label>
+                    </div>
                 </div>`
             : "";
 
@@ -102,22 +104,14 @@ export function initFileSelect({
         if (showControllerSelect && confirmButton) {
             const jvInput = fileSelectionContainer.querySelector("#controller-jv");
             const xlInput = fileSelectionContainer.querySelector("#controller-xl");
-            const syncControllers = (changed) => {
-                if (changed === "jv" && jvInput?.checked && xlInput) {
-                    xlInput.checked = false;
-                }
-                if (changed === "xl" && xlInput?.checked && jvInput) {
-                    jvInput.checked = false;
-                }
-                const next = [];
-                if (jvInput?.checked) next.push("jv");
-                if (xlInput?.checked) next.push("xl");
-                selectedControllers = next;
-                confirmButton.disabled = selectedControllers.length === 0;
+            const syncController = () => {
+                if (xlInput?.checked) selectedController = "xl";
+                else selectedController = "jv";
+                confirmButton.disabled = !selectedController;
             };
-            jvInput?.addEventListener("change", () => syncControllers("jv"));
-            xlInput?.addEventListener("change", () => syncControllers("xl"));
-            syncControllers();
+            jvInput?.addEventListener("change", syncController);
+            xlInput?.addEventListener("change", syncController);
+            syncController();
         }
 
         confirmButton.addEventListener("click", () =>
@@ -128,7 +122,7 @@ export function initFileSelect({
                 confirmButton,
                 backButton,
                 onSuccess,
-                controllers: selectedControllers,
+                controllers: [selectedController],
             })
         );
 
@@ -224,6 +218,8 @@ async function sendRequest({
     onSuccess,
     controllers = [],
 }) {
+    ensureStopButtonBinding();
+
     const operationConfig = operation ? getOperationConfig(operation) : null;
     if (!operationConfig) {
         if (statusNode) statusNode.textContent = "Неизвестная операция";
@@ -242,11 +238,12 @@ async function sendRequest({
     if (confirmButton) confirmButton.disabled = true;
     if (backButton) backButton.disabled = true;
     clearBackendResponsePreview();
-    resetTaskUi({ total: 0, running: true });
 
     showTaskStatus({
         hasTask: true,
     });
+    setProgressBarRunning(true);
+    addLog(`${mapOperationLabel(operation)} started`);
 
     if (typeof onSuccess === "function") {
         onSuccess({ operation });
@@ -256,10 +253,18 @@ async function sendRequest({
     const usePostJobIdFlow = operation === "delete";
     const requestJobId = usePostJobIdFlow ? null : crypto.randomUUID();
     let progressSocket = null;
+    const selectedController = Array.isArray(controllers) ? (controllers.find(Boolean) || "jv") : "jv";
+
     if (!usePostJobIdFlow) {
         progressSocket = initProgressSocket(
             createProgressSocketHandlers({ operation, jobId: requestJobId })
         );
+        setActiveTask({
+            operation,
+            jobId: requestJobId,
+            controller: selectedController,
+            socket: progressSocket,
+        });
     }
 
     try {
@@ -272,16 +277,9 @@ async function sendRequest({
         });
         const responseBody = await parseResponseBody(response);
 
-        if (!response?.ok) {
+        if (!response?.ok && operation !== "upload") {
             const code = response ? response.status : "unknown";
             throw new Error(`Request failed with status ${code}`);
-        }
-
-        if (!usePostJobIdFlow && operation !== "check") {
-            renderBackendResponsePreview({
-                operation,
-                payload: resolvePreviewPayload(responseBody),
-            });
         }
 
         if (usePostJobIdFlow) {
@@ -291,7 +289,14 @@ async function sendRequest({
                 progressSocket = initProgressSocket(
                     createProgressSocketHandlers({ operation, jobId: wsJobId })
                 );
+                setActiveTask({
+                    operation,
+                    jobId: wsJobId,
+                    controller: selectedController,
+                    socket: progressSocket,
+                });
                 if (statusNode) statusNode.textContent = "Задача запущена";
+                addLog(`${mapOperationLabel(operation)} task accepted (job_id: ${wsJobId})`);
                 return;
             }
             applyTaskSummaryFromResponse({
@@ -299,9 +304,13 @@ async function sendRequest({
                 payload: responseBody,
             });
             setProgressBarRunning(false);
+            clearActiveTask();
         }
 
         if (statusNode) statusNode.textContent = "Файл отправлен";
+        if (operation === "upload" && !response?.ok) {
+            addLog("Upload finished with non-2xx HTTP response, waiting websocket final state", "warn");
+        }
     } catch (error) {
         console.error(error);
         if (statusNode) statusNode.textContent = "Ошибка отправки файла";
@@ -310,9 +319,11 @@ async function sendRequest({
             hasTask: true,
             message: "Ошибка отправки файла",
         });
+        addLog(`${mapOperationLabel(operation)} request failed: ${error?.message || "unknown error"}`, "error");
         if (progressSocket && progressSocket.readyState === WebSocket.OPEN) {
             progressSocket.close();
         }
+        clearActiveTask();
     } finally {
         if (confirmButton) confirmButton.disabled = false;
         if (backButton) backButton.disabled = false;
@@ -320,7 +331,6 @@ async function sendRequest({
 }
 
 async function normalizeWsData(data) {
-    console.log(data);
     if (data instanceof Blob) {
         return await data.text();
     }
@@ -361,17 +371,29 @@ function getProgressSocketInitializer(operation) {
 function createProgressSocketHandlers({ operation, jobId }) {
     return {
         jobId,
+        onOpen: () => {
+            addLog(`${mapOperationLabel(operation)} websocket connected`);
+        },
         onMessage: async (event) => {
             const data = await normalizeWsData(event.data);
             const result = handleBackendStatusMessage(data);
             if (Object.prototype.hasOwnProperty.call(result || {}, "previewPayload")) {
-                renderBackendResponsePreview({
-                    operation,
-                    payload: result.previewPayload,
-                });
+                if (
+                    (operation === "upload" || operation === "delete") &&
+                    Array.isArray(result.previewPayload) &&
+                    result.previewPayload.length === 0
+                ) {
+                    clearBackendResponsePreview();
+                } else {
+                    renderBackendResponsePreview({
+                        operation,
+                        payload: result.previewPayload,
+                    });
+                }
             }
             if (result?.done && event?.target) {
                 event.target.close();
+                clearActiveTask();
             }
         },
         onError: () => {
@@ -380,6 +402,10 @@ function createProgressSocketHandlers({ operation, jobId }) {
                 hasTask: true,
                 message: "Ошибка соединения",
             });
+            addLog(`${mapOperationLabel(operation)} websocket error`, "error");
+        },
+        onClose: () => {
+            addLog(`${mapOperationLabel(operation)} websocket closed`);
         },
     };
 }
@@ -391,8 +417,55 @@ function extractWsJobId(responseBody) {
     return value || null;
 }
 
-function resolvePreviewPayload(responseBody) {
-    if (!responseBody || typeof responseBody !== "object") return responseBody;
-    if (Array.isArray(responseBody.result)) return responseBody.result;
-    return responseBody;
+function ensureStopButtonBinding() {
+    if (stopButtonBound) return;
+    const button = document.getElementById("stopTaskBtn");
+    if (!button) return;
+    button.addEventListener("click", () => {
+        requestStopActiveTask();
+    });
+    stopButtonBound = true;
+}
+
+function setActiveTask(task) {
+    activeTask = {
+        operation: task.operation,
+        jobId: task.jobId,
+        controller: task.controller,
+        socket: task.socket || null,
+        stopRequested: false,
+    };
+    setStopButtonEnabled(true);
+}
+
+function clearActiveTask() {
+    activeTask = null;
+    setStopButtonEnabled(false);
+}
+
+function setStopButtonEnabled(enabled) {
+    const button = document.getElementById("stopTaskBtn");
+    if (!button) return;
+    button.disabled = !enabled;
+}
+
+async function requestStopActiveTask() {
+    if (!activeTask || !activeTask.jobId) return;
+    if (activeTask.stopRequested) return;
+
+    activeTask.stopRequested = true;
+    setStopButtonEnabled(false);
+    addLog(`Stop requested for job ${activeTask.jobId}`, "warn");
+
+    try {
+        await stopJobRequest({
+            jobId: activeTask.jobId,
+            token: localStorage.getItem("jwt_access"),
+        });
+        addLog(`Stop sent for job ${activeTask.jobId}`, "warn");
+    } catch (error) {
+        addLog(`Failed to stop job ${activeTask.jobId}: ${error?.message || "unknown error"}`, "error");
+        activeTask.stopRequested = false;
+        setStopButtonEnabled(true);
+    }
 }

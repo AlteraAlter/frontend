@@ -3,6 +3,7 @@ import { initUploadModal } from "./modules/modals/uploadModal.js";
 import { initCheckModal } from "./modules/modals/checkModal.js";
 import { initDeleteModal } from "./modules/modals/deleteModal.js";
 import { renderMetricCards } from "./ui/cards.js";
+import { initLogsPanel } from "./ui/logsPanel.js";
 
 document.addEventListener("DOMContentLoaded", () => {
     initAuthModal();
@@ -10,4 +11,5 @@ document.addEventListener("DOMContentLoaded", () => {
     initCheckModal();
     initDeleteModal();
     renderMetricCards();
+    initLogsPanel();
 });

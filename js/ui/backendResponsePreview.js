@@ -35,12 +35,9 @@ export function renderBackendResponsePreview({ operation, payload }) {
 }
 
 function renderArrayPayload(container, operation, items) {
-    console.log("ITEMS: ", items);
     let normalizedRows = items
         .filter((item) => item && typeof item === "object")
         .map((item) => normalizeRow(operation, item));
-
-    console.log("NORMILIZED ROWS: ", normalizedRows);
 
     if (operation === "check") {
         normalizedRows = aggregateCheckRowsByEan(normalizedRows);
@@ -75,8 +72,13 @@ function renderArrayPayload(container, operation, items) {
     count.textContent = `Товаров (EAN): ${totalEans}, записей: ${totalRows}`;
     container.appendChild(count);
 
-    if (operation === "check") {
+    if (operation === "check" && totalEans > 1) {
         appendCheckExportAction(container, normalizedRows);
+    }
+
+    if (operation === "check") {
+        container.appendChild(buildCheckSimpleList(normalizedRows));
+        return;
     }
 
     const list = document.createElement("div");
@@ -112,6 +114,30 @@ function renderArrayPayload(container, operation, items) {
     });
 
     container.appendChild(list);
+}
+
+function buildCheckSimpleList(rows) {
+    const list = document.createElement("div");
+    list.className = "backend-check-simple-list";
+
+    rows.forEach((row) => {
+        const item = document.createElement("div");
+        item.className = "backend-check-simple-item";
+
+        const ean = document.createElement("span");
+        ean.className = "backend-check-simple-ean";
+        ean.textContent = String(row?.ean || "—");
+
+        const status = document.createElement("span");
+        status.className = `backend-response-status-badge ${statusToneClass(row?.status)}`;
+        status.textContent = formatStatusLabel(row?.status);
+
+        item.appendChild(ean);
+        item.appendChild(status);
+        list.appendChild(item);
+    });
+
+    return list;
 }
 
 function getPreviewContainer(createIfMissing) {

@@ -6,6 +6,7 @@ import {
     setProgressBarStatus,
 } from "./progressBarStatus.js";
 import { qs } from "../core/dom.js"
+import { addLog } from "./logsPanel.js";
 
 let liveJobRuntime = createEmptyRuntime();
 
@@ -40,7 +41,11 @@ export function handleBackendStatusMessage(raw) {
         case "job_started": {
             const total = toNumber(payload.total);
             resetLiveJobRuntime({ total, processed: 0, success: 0, error: 0 });
-            liveJobRuntime.mode = "upload";
+            const task = String(payload.task || "").toLowerCase();
+            if (task === "delete") liveJobRuntime.mode = "delete";
+            else if (task === "checker") liveJobRuntime.mode = "check";
+            else liveJobRuntime.mode = "upload";
+            addLog(`Job started. Total: ${Number.isFinite(total) ? total : 0}`);
             if (Number.isFinite(total)) {
                 setMetricCardValue("totalProducts", total);
                 setMetricCardValue("success", 0);
@@ -65,6 +70,7 @@ export function handleBackendStatusMessage(raw) {
             const ean = String(payload.ean || "").trim();
             const items = Array.isArray(payload.items) ? payload.items : [];
             const notFound = items.length === 0 || String(info || "").toLowerCase().includes("not found");
+            addLog(`Checker response for EAN ${ean || "-"}`);
             if (ean && !liveJobRuntime.countedEans.has(ean)) {
                 liveJobRuntime.countedEans.add(ean);
                 if (notFound) {
@@ -97,19 +103,27 @@ export function handleBackendStatusMessage(raw) {
             const key = `${String(payload.ean || "")}:${String(payload.storefront || "")}`;
             if (key && !liveJobRuntime.countedStorefrontKeys.has(key)) {
                 liveJobRuntime.countedStorefrontKeys.add(key);
-                liveJobRuntime.deleteRows.push({
+                const row = {
                     ean: payload.ean || "",
                     title: null,
                     price: null,
                     storefront: payload.storefront || null,
                     status: payload.result || "",
-                });
+                };
+                liveJobRuntime.deleteRows.push(row);
+                if (String(row.status || "").toLowerCase() !== "success") {
+                    liveJobRuntime.deleteErrorRows.push(row);
+                }
             }
-            return { done: false, previewPayload: [...liveJobRuntime.deleteRows] };
+            addLog(`Delete storefront result: EAN ${payload.ean || "-"} ${payload.storefront || "-"} => ${payload.result || "-"}`);
+            return { done: false };
         }
         case "job_progress": {
             const total = toNumber(payload.total);
             const processed = toNumber(payload.processed);
+            const task = String(payload.task || "").toLowerCase();
+            if (task === "delete") liveJobRuntime.mode = "delete";
+            if (task === "checker") liveJobRuntime.mode = "check";
 
             if (Number.isFinite(total)) {
                 liveJobRuntime.total = total;
@@ -139,6 +153,7 @@ export function handleBackendStatusMessage(raw) {
             showTaskStatus({
                 hasTask: true,
             });
+            addLog(`Progress: ${Number.isFinite(processed) ? processed : 0}/${Number.isFinite(total) ? total : 0}`);
             return { done: false };
         }
         case "job_completed": {
@@ -187,19 +202,15 @@ export function handleBackendStatusMessage(raw) {
             }
             setProgressBarRunning(false);
             showTaskStatus({ hasTask: true });
+            addLog(`Job completed. Success: ${liveJobRuntime.success}, Errors: ${liveJobRuntime.error}`, liveJobRuntime.error > 0 ? "warn" : "success");
             const completedResult = Array.isArray(payload.results)
                 ? payload.results
                 : (Array.isArray(payload.result) ? payload.result : null);
             const completedPreview = normalizeCompletedPreviewRows(completedResult);
+            const previewPayload = buildFinalPreviewPayload({ payload, completedPreview });
             return {
                 done: true,
-                previewPayload: completedPreview || (
-                    liveJobRuntime.mode === "delete"
-                        ? [...liveJobRuntime.deleteRows]
-                        : (liveJobRuntime.mode === "upload"
-                            ? liveJobRuntime.uploadRows.map(stripInternalRowFields)
-                            : [...liveJobRuntime.checkRows])
-                ),
+                previewPayload,
             };
         }
         case "job_failed": {
@@ -208,20 +219,27 @@ export function handleBackendStatusMessage(raw) {
             const success = toNumber(payload.success);
             const error = toNumber(payload.error);
             let remaining = null;
-            if (Number.isFinite(total)) setMetricCardValue("totalProducts", total);
-            if (Number.isFinite(success)) setMetricCardValue("success", success);
-            if (Number.isFinite(error)) setMetricCardValue("errors", error);
+            const resolvedTotal = Number.isFinite(total) ? total : liveJobRuntime.total;
+            const resolvedSuccess = Number.isFinite(success) ? success : liveJobRuntime.success;
+            const resolvedError = Number.isFinite(error) ? error : liveJobRuntime.error;
+            if (Number.isFinite(resolvedTotal)) setMetricCardValue("totalProducts", resolvedTotal);
+            setMetricCardValue("success", resolvedSuccess);
+            setMetricCardValue("errors", resolvedError);
             if (Number.isFinite(total) && Number.isFinite(processed)) {
                 remaining = Math.max(0, total - processed);
                 setMetricCardValue("remaining", remaining);
                 setProgressBarProgress({ processed, total });
+            } else {
+                remaining = getRuntimeRemaining();
+                setMetricCardValue("remaining", remaining);
             }
             setProgressBarStatus({
-                success,
-                error,
+                success: resolvedSuccess,
+                error: resolvedError,
                 queue: Number.isFinite(remaining) ? remaining : 0,
             });
             setProgressBarRunning(false);
+            addLog(`Job failed${info ? `: ${info}` : ""}`, "error");
             return { done: true };
         }
         case "ean_started": {
@@ -234,6 +252,11 @@ export function handleBackendStatusMessage(raw) {
             if (isTerminalStatus(payload.status)) {
                 setProgressBarRunning(false);
                 return { done: true };
+            }
+            const stage = String(payload.stage || "").trim();
+            const ean = String(payload.ean || payload.item?.ean || "").trim();
+            if (stage) {
+                addLog(`${ean ? `EAN ${ean}: ` : ""}${stage} started`);
             }
             showTaskStatus({
                 hasTask: true,
@@ -295,6 +318,12 @@ export function handleBackendStatusMessage(raw) {
             } else {
                 liveJobRuntime.uploadRows.push(row);
             }
+            if (isError) {
+                upsertUploadErrorRow(stripInternalRowFields(row));
+                addLog(`Upload failed for EAN ${row.ean || "-"} at stage ${row.stage || "final"}`, "error");
+            } else if (isSuccess) {
+                addLog(`Upload completed for EAN ${row.ean || "-"}`, "success");
+            }
 
             applyRuntimeMetrics();
             if (Number.isFinite(liveJobRuntime.total) && liveJobRuntime.total > 0) {
@@ -308,16 +337,13 @@ export function handleBackendStatusMessage(raw) {
                 setProgressBarRunning(false);
                 return {
                     done: true,
-                    previewPayload: liveJobRuntime.uploadRows.map(stripInternalRowFields),
+                    previewPayload: [...liveJobRuntime.uploadErrorRows],
                 };
             }
             showTaskStatus({
                 hasTask: true,
             });
-            return {
-                done: false,
-                previewPayload: liveJobRuntime.uploadRows.map(stripInternalRowFields),
-            };
+            return { done: false };
         }
         default:
             return { done: false };
@@ -613,7 +639,9 @@ function createEmptyRuntime() {
         uploadOutcomeByEan: new Map(),
         checkRows: [],
         deleteRows: [],
+        deleteErrorRows: [],
         uploadRows: [],
+        uploadErrorRows: [],
     };
 }
 
@@ -649,6 +677,63 @@ function stripInternalRowFields(row) {
     if (!row || typeof row !== "object") return row;
     const { _key, ...publicRow } = row;
     return publicRow;
+}
+
+function upsertUploadErrorRow(row) {
+    if (!row || typeof row !== "object") return;
+    const key = `${String(row.ean || "").trim()}:${String(row.stage || "final").trim()}`;
+    const idx = liveJobRuntime.uploadErrorRows.findIndex((entry) =>
+        `${String(entry.ean || "").trim()}:${String(entry.stage || "final").trim()}` === key
+    );
+    if (idx >= 0) {
+        liveJobRuntime.uploadErrorRows[idx] = row;
+        return;
+    }
+    liveJobRuntime.uploadErrorRows.push(row);
+}
+
+function buildFinalPreviewPayload({ payload, completedPreview }) {
+    if (liveJobRuntime.mode === "upload") {
+        const finalRows = [...liveJobRuntime.uploadErrorRows];
+        const failedEans = Array.isArray(payload?.failed_eans) ? payload.failed_eans : [];
+        failedEans.forEach((eanRaw) => {
+            const ean = String(eanRaw || "").trim();
+            if (!ean) return;
+            const exists = finalRows.some((row) => String(row?.ean || "").trim() === ean);
+            if (exists) return;
+            finalRows.push({
+                ean,
+                title: null,
+                price: null,
+                status: "error",
+                stage: "final",
+                message: "Failed during upload",
+            });
+        });
+        return finalRows;
+    }
+
+    if (liveJobRuntime.mode === "delete") {
+        const finalRows = [...liveJobRuntime.deleteErrorRows];
+        const failedEans = Array.isArray(payload?.failed_eans) ? payload.failed_eans : [];
+        failedEans.forEach((eanRaw) => {
+            const ean = String(eanRaw || "").trim();
+            if (!ean) return;
+            const exists = finalRows.some((row) => String(row?.ean || "").trim() === ean);
+            if (exists) return;
+            finalRows.push({
+                ean,
+                title: null,
+                price: null,
+                storefront: null,
+                status: "failed",
+            });
+        });
+        return finalRows;
+    }
+
+    if (completedPreview) return completedPreview;
+    return [...liveJobRuntime.checkRows];
 }
 
 function normalizeCompletedPreviewRows(results) {

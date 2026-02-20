@@ -5,6 +5,7 @@ export const ENDPOINTS = {
     upload: `${BASE_URL}/api/kaufland_main/upload_json/`,
     check: `${BASE_URL}/api/kaufland_main/`,
     delete: `${BASE_URL}/api/kaufland_main/`,
+    stopJob: `${BASE_URL}/api/kaufland_main/stop_job/`,
 };
 
 export const WS_ENDPOINTS = {
