@@ -1657,13 +1657,39 @@ body {
     }
 
     .d-bs {
-        flex-direction: column;
-        gap: 0.5rem;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.6rem;
+        width: 100%;
     }
 
     .d-bs .b {
         width: 100%;
+        min-height: 2.85rem;
+        justify-content: flex-start;
+        border-radius: 12px;
+        padding-left: 0.9rem;
+        padding-right: 0.9rem;
+    }
+
+    .d-bs .b > svg {
+        margin-right: 0.35rem;
+    }
+
+    .d-bs .u-b {
+        border-color: hsl(var(--primary) / 0.35);
+        background-color: hsl(var(--primary) / 0.08);
+    }
+
+    .d-bs .c-b {
+        border-color: hsl(var(--info) / 0.35);
+        background-color: hsl(var(--info) / 0.08);
+    }
+
+    .d-bs .d-b {
+        grid-column: 1 / -1;
         justify-content: center;
+        min-height: 3rem;
     }
 
     #progressBarContainer {
@@ -1798,5 +1824,17 @@ body {
     .single-back-btn,
     .multiple-back-btn {
         width: 100%;
+    }
+
+    .d-bs {
+        grid-template-columns: 1fr;
+    }
+
+    .d-bs .d-b {
+        grid-column: auto;
+    }
+
+    .d-bs .b {
+        justify-content: center;
     }
 }

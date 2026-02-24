@@ -50,11 +50,24 @@ http://localhost:5500
 ```
 
 ## Backend Configuration
-Edit `js/core/config.js`:
+Frontend now auto-detects backend URL:
+- if frontend is served from port `8050`, it uses current origin
+- otherwise it defaults to `http://127.0.0.1:8050`
+
+You can override without editing source:
 
 ```js
-export const BASE_URL = "http://YOUR_BACKEND_HOST:8050";
-export const WS_BASE_URL = "ws://YOUR_BACKEND_HOST:8050";
+// browser console
+localStorage.setItem("api_base_url", "http://YOUR_BACKEND_HOST:8050");
+location.reload();
+```
+
+Or inject runtime config before loading `js/main.js`:
+
+```html
+<script>
+  window.__APP_CONFIG__ = { baseUrl: "http://YOUR_BACKEND_HOST:8050" };
+</script>
 ```
 
 For HTTPS production:

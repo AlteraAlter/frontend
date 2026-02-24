@@ -13,6 +13,10 @@ import {
     clearBackendResponsePreview,
     renderBackendResponsePreview,
 } from "../../ui/backendResponsePreview.js";
+import {
+    DEFAULT_CONTROLLER,
+    getSelectedController,
+} from "../../ui/controllerSelect.js";
 
 export function initCheckModal() {
     const modal = qs("#check-modal");
@@ -26,8 +30,6 @@ export function initCheckModal() {
     const singleBackBtn = qs("#singleBackBtn");
     const singleInput = qs("#ean-input");
     const singleSubmit = qs("#singleCheckSubmit");
-    const singleControllerJv = qs("#single-controller-jv");
-    const singleControllerXl = qs("#single-controller-xl");
 
     const multipleModal = qs("#multiple-check-modal");
     const multipleDialog = qs("#multiple-check-dialog");
@@ -122,9 +124,9 @@ export function initCheckModal() {
     }
 
     if (singleInput && singleSubmit) {
+        const singleControllerGroupName = "single-check-controller";
         const getSingleController = () => {
-            if (singleControllerXl?.checked) return "xl";
-            return "jv";
+            return getSelectedController(singleModal || singleDialog, singleControllerGroupName) || DEFAULT_CONTROLLER;
         };
 
         const updateSingleState = () => {
@@ -136,8 +138,8 @@ export function initCheckModal() {
         };
 
         singleInput.addEventListener("input", updateSingleState);
-        singleControllerJv?.addEventListener("change", updateSingleState);
-        singleControllerXl?.addEventListener("change", updateSingleState);
+        const singleControllerInputs = (singleModal || document).querySelectorAll(`input[name="${singleControllerGroupName}"]`);
+        singleControllerInputs.forEach((input) => input.addEventListener("change", updateSingleState));
         updateSingleState();
 
         singleSubmit.addEventListener("click", async () => {

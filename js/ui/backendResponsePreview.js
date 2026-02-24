@@ -76,6 +76,11 @@ function renderArrayPayload(container, operation, items) {
         appendCheckExportAction(container, normalizedRows);
     }
 
+    if (operation === "upload" || operation === "delete") {
+        container.appendChild(buildErrorEanList(items, operation));
+        return;
+    }
+
     if (operation === "check") {
         container.appendChild(buildCheckSimpleList(normalizedRows));
         return;
@@ -134,6 +139,45 @@ function buildCheckSimpleList(rows) {
 
         item.appendChild(ean);
         item.appendChild(status);
+        list.appendChild(item);
+    });
+
+    return list;
+}
+
+function buildErrorEanList(items, operation) {
+    const list = document.createElement("div");
+    list.className = "backend-check-simple-list";
+
+    const errorRows = (Array.isArray(items) ? items : [])
+        .filter((item) => item && typeof item === "object")
+        .map((item) => ({
+            ean: String(item.ean || item.EAN || "—"),
+            error: resolveErrorText(item, operation),
+        }));
+
+    if (errorRows.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "text-caption text-muted-foreground";
+        empty.textContent = "No error products";
+        list.appendChild(empty);
+        return list;
+    }
+
+    errorRows.forEach((row) => {
+        const item = document.createElement("div");
+        item.className = "backend-check-simple-item";
+
+        const ean = document.createElement("span");
+        ean.className = "backend-check-simple-ean";
+        ean.textContent = row.ean;
+
+        const error = document.createElement("span");
+        error.className = "backend-response-status-badge backend-response-status-error";
+        error.textContent = row.error;
+
+        item.appendChild(ean);
+        item.appendChild(error);
         list.appendChild(item);
     });
 
@@ -387,6 +431,18 @@ function buildStatusBadge(status) {
     badge.className = `backend-response-status-badge ${statusToneClass(status)}`;
     badge.textContent = formatStatusLabel(status);
     return badge;
+}
+
+function resolveErrorText(item, operation) {
+    const detail = getStringValue(item, ["detail", "error", "message"], "");
+    if (detail) return detail;
+
+    const status = String(item?.status || item?.result || "").toLowerCase();
+    if (status === "failed") return "failed";
+    if (status === "error") return "error";
+    if (status === "not_found") return "not found";
+    if (operation === "delete") return "delete failed";
+    return "upload failed";
 }
 
 function statusToneClass(status) {

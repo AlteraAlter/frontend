@@ -1,5 +1,42 @@
-export const BASE_URL = "http://192.168.0.129:8050";
-export const WS_BASE_URL = "ws://192.168.0.129:8050";
+const RUNTIME_CONFIG = window.__APP_CONFIG__ || {};
+const STORAGE_API_KEY = "api_base_url";
+
+function getBaseUrl() {
+    if (RUNTIME_CONFIG.baseUrl) return normalizeBaseUrl(RUNTIME_CONFIG.baseUrl);
+
+    const saved = localStorage.getItem(STORAGE_API_KEY);
+    if (saved) return normalizeBaseUrl(saved);
+
+    if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+        if (window.location.port === "8050") {
+            return stripTrailingSlash(window.location.origin);
+        }
+    }
+
+    return "http://127.0.0.1:8050";
+}
+
+function toWsBaseUrl(httpBaseUrl) {
+    const url = new URL(normalizeBaseUrl(httpBaseUrl));
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return stripTrailingSlash(url.toString());
+}
+
+function normalizeBaseUrl(value) {
+    const trimmed = stripTrailingSlash(value);
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (trimmed.startsWith("/")) {
+        return stripTrailingSlash(`${window.location.origin}${trimmed}`);
+    }
+    return stripTrailingSlash(`http://${trimmed}`);
+}
+
+function stripTrailingSlash(value) {
+    return String(value || "").replace(/\/+$/g, "");
+}
+
+export const BASE_URL = getBaseUrl();
+export const WS_BASE_URL = toWsBaseUrl(BASE_URL);
 
 export const ENDPOINTS = {
     upload: `${BASE_URL}/api/kaufland_main/upload_json/`,

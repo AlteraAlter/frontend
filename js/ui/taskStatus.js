@@ -45,7 +45,7 @@ export function handleBackendStatusMessage(raw) {
             if (task === "delete") liveJobRuntime.mode = "delete";
             else if (task === "checker") liveJobRuntime.mode = "check";
             else liveJobRuntime.mode = "upload";
-            addLog(`Job started. Total: ${Number.isFinite(total) ? total : 0}`);
+            addLog(`🚀 Job started: ${Number.isFinite(total) ? total : 0} items in queue`);
             if (Number.isFinite(total)) {
                 setMetricCardValue("totalProducts", total);
                 setMetricCardValue("success", 0);
@@ -70,14 +70,11 @@ export function handleBackendStatusMessage(raw) {
             const ean = String(payload.ean || "").trim();
             const items = Array.isArray(payload.items) ? payload.items : [];
             const notFound = items.length === 0 || String(info || "").toLowerCase().includes("not found");
-            addLog(`Checker response for EAN ${ean || "-"}`);
+            addLog(`🔎 Check result for EAN ${ean || "-"}`);
             if (ean && !liveJobRuntime.countedEans.has(ean)) {
                 liveJobRuntime.countedEans.add(ean);
-                if (notFound) {
-                    liveJobRuntime.error += 1;
-                } else {
-                    liveJobRuntime.success += 1;
-                }
+                // Checker "not found" is a valid outcome, not an error.
+                liveJobRuntime.success += 1;
             }
             if (items.length > 0) {
                 items.forEach((item) => {
@@ -115,7 +112,9 @@ export function handleBackendStatusMessage(raw) {
                     liveJobRuntime.deleteErrorRows.push(row);
                 }
             }
-            addLog(`Delete storefront result: EAN ${payload.ean || "-"} ${payload.storefront || "-"} => ${payload.result || "-"}`);
+            addLog(
+                `🗑️ Delete ${normalizeOutcome(payload.result)}: EAN ${payload.ean || "-"} (${(payload.storefront || "-").toUpperCase()})`
+            );
             return { done: false };
         }
         case "job_progress": {
@@ -153,7 +152,7 @@ export function handleBackendStatusMessage(raw) {
             showTaskStatus({
                 hasTask: true,
             });
-            addLog(`Progress: ${Number.isFinite(processed) ? processed : 0}/${Number.isFinite(total) ? total : 0}`);
+            addLog(`⏳ Progress: ${Number.isFinite(processed) ? processed : 0}/${Number.isFinite(total) ? total : 0}`);
             return { done: false };
         }
         case "job_completed": {
@@ -167,16 +166,33 @@ export function handleBackendStatusMessage(raw) {
             const resultCount = toNumber(payload.result_count);
             let remaining = null;
 
+            const isCheckerTask =
+                liveJobRuntime.mode === "check" ||
+                String(payload.task || "").toLowerCase() === "checker" ||
+                Number.isFinite(found) ||
+                Number.isFinite(notFound);
+
             if (Number.isFinite(total)) liveJobRuntime.total = total;
             if (Number.isFinite(processed)) liveJobRuntime.processed = processed;
-            if (Number.isFinite(success)) liveJobRuntime.success = success;
-            else if (Number.isFinite(found)) liveJobRuntime.success = found;
-            if (Number.isFinite(failed)) liveJobRuntime.error = failed;
-            else if (Number.isFinite(error)) liveJobRuntime.error = error;
-            else if (Number.isFinite(notFound)) liveJobRuntime.error = notFound;
-            else if (Number.isFinite(resultCount) && Number.isFinite(total)) {
-                liveJobRuntime.success = resultCount;
-                liveJobRuntime.error = Math.max(0, total - resultCount);
+
+            if (isCheckerTask) {
+                const foundCount = Number.isFinite(found) ? found : 0;
+                const notFoundCount = Number.isFinite(notFound)
+                    ? notFound
+                    : (Number.isFinite(total) ? Math.max(0, total - foundCount) : 0);
+                const checkerTotal = Number.isFinite(total) ? total : foundCount + notFoundCount;
+                // Checker outcome: found + not found are both successful checks.
+                liveJobRuntime.success = checkerTotal;
+                liveJobRuntime.error = 0;
+            } else {
+                if (Number.isFinite(success)) liveJobRuntime.success = success;
+                else if (Number.isFinite(found)) liveJobRuntime.success = found;
+                if (Number.isFinite(failed)) liveJobRuntime.error = failed;
+                else if (Number.isFinite(error)) liveJobRuntime.error = error;
+                else if (Number.isFinite(resultCount) && Number.isFinite(total)) {
+                    liveJobRuntime.success = resultCount;
+                    liveJobRuntime.error = Math.max(0, total - resultCount);
+                }
             }
 
             if (Number.isFinite(total)) setMetricCardValue("totalProducts", total);
@@ -202,7 +218,10 @@ export function handleBackendStatusMessage(raw) {
             }
             setProgressBarRunning(false);
             showTaskStatus({ hasTask: true });
-            addLog(`Job completed. Success: ${liveJobRuntime.success}, Errors: ${liveJobRuntime.error}`, liveJobRuntime.error > 0 ? "warn" : "success");
+            addLog(
+                `${liveJobRuntime.error > 0 ? "✅" : "🎉"} Job completed: ${liveJobRuntime.success} success, ${liveJobRuntime.error} errors`,
+                "success"
+            );
             const completedResult = Array.isArray(payload.results)
                 ? payload.results
                 : (Array.isArray(payload.result) ? payload.result : null);
@@ -239,7 +258,7 @@ export function handleBackendStatusMessage(raw) {
                 queue: Number.isFinite(remaining) ? remaining : 0,
             });
             setProgressBarRunning(false);
-            addLog(`Job failed${info ? `: ${info}` : ""}`, "error");
+            addLog(`❌ Job failed${info ? `: ${humanizeInfo(info)}` : ""}`, "error");
             return { done: true };
         }
         case "ean_started": {
@@ -256,7 +275,7 @@ export function handleBackendStatusMessage(raw) {
             const stage = String(payload.stage || "").trim();
             const ean = String(payload.ean || payload.item?.ean || "").trim();
             if (stage) {
-                addLog(`${ean ? `EAN ${ean}: ` : ""}${stage} started`);
+                addLog(`⚙️ ${ean ? `EAN ${ean}: ` : ""}${formatStageLabel(stage)}`);
             }
             showTaskStatus({
                 hasTask: true,
@@ -320,9 +339,9 @@ export function handleBackendStatusMessage(raw) {
             }
             if (isError) {
                 upsertUploadErrorRow(stripInternalRowFields(row));
-                addLog(`Upload failed for EAN ${row.ean || "-"} at stage ${row.stage || "final"}`, "error");
+                addLog(`❌ Upload failed for EAN ${row.ean || "-"} at ${formatStageLabel(row.stage || "final")}`, "error");
             } else if (isSuccess) {
-                addLog(`Upload completed for EAN ${row.ean || "-"}`, "success");
+                addLog(`✅ Upload completed for EAN ${row.ean || "-"}`, "success");
             }
 
             applyRuntimeMetrics();
@@ -536,6 +555,39 @@ function toNumber(value) {
     return Number.isFinite(num) ? num : null;
 }
 
+function formatStageLabel(stage) {
+    const value = String(stage || "").trim().replace(/[_-]+/g, " ");
+    if (!value) return "processing";
+    const known = {
+        validation: "validation",
+        generate_description_and_pics: "description + image preparation",
+        adapt_html_description: "HTML description adaptation",
+        category_selector: "category selection",
+        create_product_body: "product payload creation",
+        fetch_unit_id: "unit lookup",
+        update_price: "price update",
+        add_unit: "offer creation",
+        final: "finalization",
+    };
+    return known[String(stage || "").trim()] || value;
+}
+
+function normalizeOutcome(value) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized) return "status unknown";
+    if (normalized === "success") return "success";
+    if (normalized === "not found") return "not found";
+    if (normalized === "failed") return "failed";
+    return normalized;
+}
+
+function humanizeInfo(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    if (text.toLowerCase() === "stopped") return "stopped by user";
+    return text;
+}
+
 function isTerminalStatus(status) {
     const normalized = String(status || "").toLowerCase();
     return normalized === "error" || normalized === "failed" || normalized === "cancelled" || normalized === "canceled" || normalized === "stopped";
@@ -615,13 +667,12 @@ function groupByEan(items) {
 function isErrorItem(operation, item) {
     if (!item || typeof item !== "object") return false;
     const status = String(item.status || "").toLowerCase();
-    if (status === "error" || status === "failed" || status === "not_found") return true;
+    if (status === "error" || status === "failed") return true;
+    if (operation !== "check" && status === "not_found") return true;
     if (item.error) return true;
 
     if (operation === "check") {
-        if (item.exists === false) return true;
-        if (item.found === false) return true;
-        if (item.title == null || item.title === "") return true;
+        return false;
     }
     return false;
 }
