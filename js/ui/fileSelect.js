@@ -174,25 +174,8 @@ export function initFileSelect({
             selectedFile = file;
 
             if (jsonOnly && jsonCountCardKey) {
-                try {
-                    const text = await file.text();
-                    const data = JSON.parse(text);
-                    if (!Array.isArray(data)) {
-                        fileStatus.textContent = "Invalid JSON format: expected array";
-                        selectedFile = null;
-                        fileInput.value = "";
-                        setMetricCardValue(jsonCountCardKey, 0);
-                        return;
-                    }
-                    setMetricCardValue(jsonCountCardKey, data.length);
-                } catch (error) {
-                    console.error(error);
-                    fileStatus.textContent = "Failed to read JSON file";
-                    selectedFile = null;
-                    fileInput.value = "";
-                    setMetricCardValue(jsonCountCardKey, 0);
-                    return;
-                }
+                // Let the backend report totals (unique items) via websocket.
+                setMetricCardValue(jsonCountCardKey, 0);
             }
             renderConfirm(fileName);
         });
@@ -278,9 +261,10 @@ async function sendRequest({
         });
         const responseBody = await parseResponseBody(response);
 
-        if (!response?.ok && operation !== "upload") {
+        if (!response?.ok) {
             const code = response ? response.status : "unknown";
-            throw new Error(`Request failed with status ${code}`);
+            const backendError = extractBackendError(responseBody);
+            throw new Error(backendError || `Request failed with status ${code}`);
         }
 
         if (usePostJobIdFlow) {
@@ -308,9 +292,14 @@ async function sendRequest({
             clearActiveTask();
         }
 
-        if (statusNode) statusNode.textContent = "File uploaded";
-        if (operation === "upload" && !response?.ok) {
-            addLog("ℹ️ Upload HTTP response is non-2xx, waiting for final websocket status");
+        if (!usePostJobIdFlow) {
+            const acceptedJobId = extractWsJobId(responseBody) || requestJobId;
+            if (statusNode) statusNode.textContent = "Task started";
+            if (acceptedJobId) {
+                addLog(`${mapOperationLabel(operation)} accepted. Job ID: ${acceptedJobId}`);
+            }
+        } else if (statusNode) {
+            statusNode.textContent = "File uploaded";
         }
     } catch (error) {
         console.error(error);
@@ -329,6 +318,25 @@ async function sendRequest({
         if (confirmButton) confirmButton.disabled = false;
         if (backButton) backButton.disabled = false;
     }
+}
+
+function extractBackendError(payload) {
+    if (!payload) return null;
+    if (typeof payload === "string") return payload;
+    if (typeof payload !== "object") return null;
+
+    const direct = payload.error || payload.detail || payload.message;
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+
+    if (Array.isArray(payload.file) && payload.file.length) {
+        return String(payload.file[0]);
+    }
+
+    if (Array.isArray(payload.non_field_errors) && payload.non_field_errors.length) {
+        return String(payload.non_field_errors[0]);
+    }
+
+    return null;
 }
 
 async function normalizeWsData(data) {
@@ -356,6 +364,25 @@ async function parseResponseBody(response) {
     }
 }
 
+function parseSocketMessage(rawData) {
+    if (rawData == null) return null;
+    if (typeof rawData !== "string") {
+        return typeof rawData === "object" ? rawData : null;
+    }
+    try {
+        return JSON.parse(rawData);
+    } catch {
+        return null;
+    }
+}
+
+function extractSocketJobId(payload) {
+    if (!payload || typeof payload !== "object") return null;
+    const value = payload.job_id ?? payload.jobId ?? payload.payload?.job_id ?? null;
+    const normalized = String(value || "").trim();
+    return normalized || null;
+}
+
 function getProgressSocketInitializer(operation) {
     switch (operation) {
         case "upload":
@@ -370,6 +397,8 @@ function getProgressSocketInitializer(operation) {
 }
 
 function createProgressSocketHandlers({ operation, jobId }) {
+    const ignoredForeignJobIds = new Set();
+
     return {
         jobId,
         onOpen: () => {
@@ -377,7 +406,20 @@ function createProgressSocketHandlers({ operation, jobId }) {
         },
         onMessage: async (event) => {
             const data = await normalizeWsData(event.data);
-            const result = handleBackendStatusMessage(data);
+            const parsed = parseSocketMessage(data);
+            const incomingJobId = extractSocketJobId(parsed);
+            if (jobId && incomingJobId && incomingJobId !== jobId) {
+                if (!ignoredForeignJobIds.has(incomingJobId)) {
+                    ignoredForeignJobIds.add(incomingJobId);
+                    addLog(
+                        `${mapOperationLabel(operation)} ignored websocket event for foreign job ${incomingJobId}`,
+                        "warn"
+                    );
+                }
+                return;
+            }
+
+            const result = handleBackendStatusMessage(parsed || data);
             if (Object.prototype.hasOwnProperty.call(result || {}, "previewPayload")) {
                 // Keep the "backend response preview" table in sync with incremental websocket events.
                 if (
@@ -406,8 +448,15 @@ function createProgressSocketHandlers({ operation, jobId }) {
             });
             addLog(`${mapOperationLabel(operation)} websocket error`, "error");
         },
-        onClose: () => {
-            addLog(`${mapOperationLabel(operation)} websocket closed`);
+        onClose: (event) => {
+            const code = Number(event?.code);
+            const reason = String(event?.reason || "").trim();
+            const clean = Boolean(event?.wasClean);
+            const parts = [];
+            if (Number.isFinite(code)) parts.push(`code=${code}`);
+            if (reason) parts.push(`reason=${reason}`);
+            parts.push(clean ? "clean=true" : "clean=false");
+            addLog(`${mapOperationLabel(operation)} websocket closed${parts.length ? ` (${parts.join(", ")})` : ""}`);
         },
     };
 }
@@ -485,4 +534,3 @@ async function requestStopActiveTask() {
         setStopButtonEnabled(true);
     }
 }
-

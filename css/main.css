@@ -1497,6 +1497,7 @@ input[type="radio"]:focus-visible {
 }
 
 .logs-panel {
+    --logs-max-height: 2.75rem;
     position: fixed;
     left: 0;
     right: 0;
@@ -1505,12 +1506,39 @@ input[type="radio"]:focus-visible {
     background: hsl(var(--card));
     border-top: 1px solid hsl(var(--border));
     box-shadow: 0 -4px 12px rgb(0 0 0 / 0.06);
-    max-height: 2.75rem;
+    max-height: var(--logs-max-height);
     transition: max-height 180ms ease;
 }
 
 .logs-panel[data-expanded="true"] {
-    max-height: 14rem;
+    --logs-max-height: 14rem;
+}
+
+.logs-resize-handle {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 8px;
+    cursor: ns-resize;
+    touch-action: none;
+    background: linear-gradient(
+        to bottom,
+        rgb(0 0 0 / 0.08),
+        rgb(0 0 0 / 0)
+    );
+}
+
+.logs-resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 1px;
+    width: 44px;
+    height: 4px;
+    border-radius: 999px;
+    transform: translateX(-50%);
+    background: rgb(0 0 0 / 0.12);
 }
 
 .logs-header {
@@ -1545,7 +1573,7 @@ input[type="radio"]:focus-visible {
     list-style: none;
     margin: 0;
     padding: 0 0.75rem 0.75rem;
-    max-height: calc(14rem - 2.75rem);
+    max-height: calc(var(--logs-max-height) - 2.75rem);
     overflow: auto;
 }
 
@@ -1754,11 +1782,11 @@ body {
     }
 
     .logs-panel[data-expanded="true"] {
-        max-height: 45vh;
+        --logs-max-height: 45vh;
     }
 
     .logs-list {
-        max-height: calc(45vh - 2.75rem);
+        max-height: calc(var(--logs-max-height) - 2.75rem);
     }
 }
 

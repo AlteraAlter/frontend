@@ -120,7 +120,10 @@ export function handleBackendStatusMessage(raw) {
         case "job_progress": {
             const total = toNumber(payload.total);
             const processed = toNumber(payload.processed);
+            const payloadSuccess = toNumber(payload.success);
+            const payloadError = toNumber(payload.error);
             const task = String(payload.task || "").toLowerCase();
+            const prevProcessed = Number.isFinite(liveJobRuntime.processed) ? liveJobRuntime.processed : 0;
             if (task === "delete") liveJobRuntime.mode = "delete";
             if (task === "checker") liveJobRuntime.mode = "check";
 
@@ -129,13 +132,34 @@ export function handleBackendStatusMessage(raw) {
                 setMetricCardValue("totalProducts", total);
             }
             if (Number.isFinite(processed)) {
-                const prevProcessed = Number.isFinite(liveJobRuntime.processed) ? liveJobRuntime.processed : 0;
+                if (processed < prevProcessed) {
+                    addLog(
+                        `⚠️ Ignored stale progress event: ${processed}/${Number.isFinite(total) ? total : "?"} (current ${prevProcessed})`,
+                        "warn"
+                    );
+                    return { done: false };
+                }
                 const status = String(payload.status || "").toLowerCase();
-                if (processed > prevProcessed && (status === "success" || status === "failed")) {
-                    if (status === "success") liveJobRuntime.success += 1;
-                    if (status === "failed") liveJobRuntime.error += 1;
+                if (Number.isFinite(payloadSuccess)) {
+                    liveJobRuntime.success = payloadSuccess;
+                }
+                if (Number.isFinite(payloadError)) {
+                    liveJobRuntime.error = payloadError;
+                }
+                if (!Number.isFinite(payloadSuccess) && !Number.isFinite(payloadError)) {
+                    if (processed > prevProcessed && (status === "success" || status === "failed")) {
+                        if (status === "success") liveJobRuntime.success += 1;
+                        if (status === "failed") liveJobRuntime.error += 1;
+                    }
                 }
                 liveJobRuntime.processed = processed;
+            } else {
+                if (Number.isFinite(payloadSuccess)) {
+                    liveJobRuntime.success = payloadSuccess;
+                }
+                if (Number.isFinite(payloadError)) {
+                    liveJobRuntime.error = payloadError;
+                }
             }
             applyRuntimeMetrics();
 
@@ -227,8 +251,20 @@ export function handleBackendStatusMessage(raw) {
                 : (Array.isArray(payload.result) ? payload.result : null);
             const completedPreview = normalizeCompletedPreviewRows(completedResult);
             const previewPayload = buildFinalPreviewPayload({ payload, completedPreview });
+            const resolvedTotal = Number.isFinite(total) ? total : liveJobRuntime.total;
+            const resolvedProcessed = Number.isFinite(processed) ? processed : liveJobRuntime.processed;
+            const allItemsProcessed =
+                Number.isFinite(resolvedTotal) &&
+                Number.isFinite(resolvedProcessed) &&
+                resolvedProcessed >= resolvedTotal;
+            if (!allItemsProcessed) {
+                addLog(
+                    `⚠️ Completion event received early: processed ${Number.isFinite(resolvedProcessed) ? resolvedProcessed : "?"} of ${Number.isFinite(resolvedTotal) ? resolvedTotal : "?"}. Keeping socket open.`,
+                    "warn"
+                );
+            }
             return {
-                done: true,
+                done: allItemsProcessed,
                 previewPayload,
             };
         }
@@ -241,6 +277,10 @@ export function handleBackendStatusMessage(raw) {
             const resolvedTotal = Number.isFinite(total) ? total : liveJobRuntime.total;
             const resolvedSuccess = Number.isFinite(success) ? success : liveJobRuntime.success;
             const resolvedError = Number.isFinite(error) ? error : liveJobRuntime.error;
+            if (Number.isFinite(resolvedTotal)) liveJobRuntime.total = resolvedTotal;
+            if (Number.isFinite(processed)) liveJobRuntime.processed = processed;
+            liveJobRuntime.success = resolvedSuccess;
+            liveJobRuntime.error = resolvedError;
             if (Number.isFinite(resolvedTotal)) setMetricCardValue("totalProducts", resolvedTotal);
             setMetricCardValue("success", resolvedSuccess);
             setMetricCardValue("errors", resolvedError);
@@ -259,7 +299,7 @@ export function handleBackendStatusMessage(raw) {
             });
             setProgressBarRunning(false);
             addLog(`❌ Job failed${info ? `: ${humanizeInfo(info)}` : ""}`, "error");
-            return { done: true };
+            return { done: false };
         }
         case "ean_started": {
             showTaskStatus({
@@ -268,12 +308,20 @@ export function handleBackendStatusMessage(raw) {
             return { done: false };
         }
         case "progress": {
-            if (isTerminalStatus(payload.status)) {
-                setProgressBarRunning(false);
-                return { done: true };
-            }
             const stage = String(payload.stage || "").trim();
             const ean = String(payload.ean || payload.item?.ean || "").trim();
+            const hasEan = Boolean(ean || payload.item?.ean);
+            if (isTerminalStatus(payload.status) && !hasEan) {
+                addLog(
+                    `⚠️ Received terminal progress status without EAN (${String(payload.status || "").trim() || "unknown"}). Ignoring auto-close.`,
+                    "warn"
+                );
+                setProgressBarRunning(false);
+                showTaskStatus({
+                    hasTask: true,
+                });
+                return { done: false };
+            }
             if (stage) {
                 addLog(`⚙️ ${ean ? `EAN ${ean}: ` : ""}${formatStageLabel(stage)}`);
             }
@@ -310,9 +358,17 @@ export function handleBackendStatusMessage(raw) {
                     if (nextOutcome === "error") liveJobRuntime.error += 1;
                 }
                 if (Number.isFinite(liveJobRuntime.total) && liveJobRuntime.total > 0) {
-                    liveJobRuntime.processed = Math.min(liveJobRuntime.total, liveJobRuntime.uploadOutcomeByEan.size);
+                    const nextProcessed = Math.min(liveJobRuntime.total, liveJobRuntime.uploadOutcomeByEan.size);
+                    liveJobRuntime.processed = Math.max(
+                        Number.isFinite(liveJobRuntime.processed) ? liveJobRuntime.processed : 0,
+                        nextProcessed
+                    );
                 } else {
-                    liveJobRuntime.processed = liveJobRuntime.success + liveJobRuntime.error;
+                    const nextProcessed = liveJobRuntime.success + liveJobRuntime.error;
+                    liveJobRuntime.processed = Math.max(
+                        Number.isFinite(liveJobRuntime.processed) ? liveJobRuntime.processed : 0,
+                        nextProcessed
+                    );
                 }
             }
 
@@ -352,13 +408,6 @@ export function handleBackendStatusMessage(raw) {
                 });
             }
 
-            if (isTerminalStatus(payload.status) && !payload.ean && !payload.item?.ean) {
-                setProgressBarRunning(false);
-                return {
-                    done: true,
-                    previewPayload: [...liveJobRuntime.uploadErrorRows],
-                };
-            }
             showTaskStatus({
                 hasTask: true,
             });

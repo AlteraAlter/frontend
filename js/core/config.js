@@ -8,9 +8,7 @@ function getBaseUrl() {
     if (saved) return normalizeBaseUrl(saved);
 
     if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-        if (window.location.port === "8050") {
-            return stripTrailingSlash(window.location.origin);
-        }
+        return stripTrailingSlash(window.location.origin);
     }
 
     return "http://127.0.0.1:8050";

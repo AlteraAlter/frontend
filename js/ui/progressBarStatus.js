@@ -6,7 +6,6 @@ let progressNodes = null;
 export function initProgressBarStatus({ success = 0, error = 0, queue = 0 } = {}) {
     const container = qs("#progressBarContainer");
     if (!container) {
-        console.log("Container not found");
         return;
     }
     if (statusNodes && progressNodes) {
