@@ -2,6 +2,7 @@ import { initAuthModal } from "./modules/modals/authModal.js";
 import { initUploadModal } from "./modules/modals/uploadModal.js";
 import { initCheckModal } from "./modules/modals/checkModal.js";
 import { initDeleteModal } from "./modules/modals/deleteModal.js";
+import { initAftercoolSyncAction } from "./modules/actions/aftercoolSyncAction.js";
 import { renderMetricCards } from "./ui/cards.js";
 import { initLogsPanel } from "./ui/logsPanel.js";
 
@@ -11,6 +12,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initUploadModal();
     initCheckModal();
     initDeleteModal();
+    initAftercoolSyncAction();
     renderMetricCards();
     initLogsPanel();
 });

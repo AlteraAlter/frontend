@@ -4,6 +4,7 @@ import { ENDPOINTS } from "../core/config.js";
 const OPERATION_CONFIG = {
     upload: {
         endpoint: ENDPOINTS.upload,
+        requiresFile: true,
         buildFormData: (formData, file, jobId, controllers) => {
             formData.append("file", file);
             appendJobId(formData, jobId);
@@ -13,6 +14,7 @@ const OPERATION_CONFIG = {
     },
     check: {
         endpoint: ENDPOINTS.check,
+        requiresFile: true,
         buildFormData: (formData, file, jobId, controllers) => {
             formData.append("file", file);
             appendJobId(formData, jobId);
@@ -22,11 +24,17 @@ const OPERATION_CONFIG = {
     },
     delete: {
         endpoint: ENDPOINTS.delete,
+        requiresFile: true,
         buildFormData: (formData, file, jobId, controllers) => {
             formData.append("file", file);
             formData.append("mode", "delete");
             appendController(formData, controllers);
         },
+    },
+    aftercool_sync: {
+        endpoint: ENDPOINTS.aftercoolSync,
+        requiresFile: false,
+        method: "GET",
     },
 };
 
@@ -38,16 +46,24 @@ export async function sendFileRequest({ operation, file, token, jobId, controlle
     const config = getOperationConfig(operation);
     if (!config || config.disabled) return null;
 
-    const formData = new FormData();
-    config.buildFormData(formData, file, jobId, controllers);
+    const headers = {};
+    if (token) {
+        headers.Authorization = `Bearer ${token}`;
+    }
 
-    const response = await fetch(config.endpoint, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-    });
+    const method = String(config.method || "POST").toUpperCase();
+    const requestInit = {
+        method,
+        headers,
+    };
+
+    if (method !== "GET") {
+        const formData = new FormData();
+        config.buildFormData(formData, file, jobId, controllers);
+        requestInit.body = formData;
+    }
+
+    const response = await fetch(config.endpoint, requestInit);
     return response;
 }
 

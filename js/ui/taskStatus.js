@@ -44,6 +44,7 @@ export function handleBackendStatusMessage(raw) {
             const task = String(payload.task || "").toLowerCase();
             if (task === "delete") liveJobRuntime.mode = "delete";
             else if (task === "checker") liveJobRuntime.mode = "check";
+            else if (task === "price_sync") liveJobRuntime.mode = "check";
             else liveJobRuntime.mode = "upload";
             addLog(`🚀 Job started: ${Number.isFinite(total) ? total : 0} items in queue`);
             if (Number.isFinite(total)) {
@@ -124,8 +125,10 @@ export function handleBackendStatusMessage(raw) {
             const payloadError = toNumber(payload.error);
             const task = String(payload.task || "").toLowerCase();
             const prevProcessed = Number.isFinite(liveJobRuntime.processed) ? liveJobRuntime.processed : 0;
+            let previewPayload = null;
             if (task === "delete") liveJobRuntime.mode = "delete";
             if (task === "checker") liveJobRuntime.mode = "check";
+            if (task === "price_sync") liveJobRuntime.mode = "check";
 
             if (Number.isFinite(total)) {
                 liveJobRuntime.total = total;
@@ -173,10 +176,36 @@ export function handleBackendStatusMessage(raw) {
                 queue: getRuntimeRemaining(),
             });
 
+            if (task === "price_sync") {
+                const ean = String(payload.ean || "").trim();
+                if (ean) {
+                    const status = String(payload.status || "").trim().toLowerCase() || "processed";
+                    const row = {
+                        ean,
+                        country: String(payload.storefront || "").trim() || "—",
+                        title: "Aftercool sync",
+                        price: payload.aftercool_price ?? null,
+                        status,
+                    };
+                    const existingIdx = liveJobRuntime.checkRows.findIndex(
+                        (entry) => String(entry?.ean || "").trim() === ean
+                    );
+                    if (existingIdx >= 0) {
+                        liveJobRuntime.checkRows[existingIdx] = row;
+                    } else {
+                        liveJobRuntime.checkRows.push(row);
+                    }
+                    previewPayload = [...liveJobRuntime.checkRows];
+                }
+            }
+
             showTaskStatus({
                 hasTask: true,
             });
             addLog(`⏳ Progress: ${Number.isFinite(processed) ? processed : 0}/${Number.isFinite(total) ? total : 0}`);
+            if (previewPayload) {
+                return { done: false, previewPayload };
+            }
             return { done: false };
         }
         case "job_completed": {
@@ -188,13 +217,16 @@ export function handleBackendStatusMessage(raw) {
             const found = toNumber(payload.found);
             const notFound = toNumber(payload.not_found);
             const resultCount = toNumber(payload.result_count);
+            const taskName = String(payload.task || "").toLowerCase();
+            const isPriceSyncTask = taskName === "price_sync";
             let remaining = null;
 
             const isCheckerTask =
-                liveJobRuntime.mode === "check" ||
-                String(payload.task || "").toLowerCase() === "checker" ||
+                !isPriceSyncTask &&
+                (liveJobRuntime.mode === "check" ||
+                taskName === "checker" ||
                 Number.isFinite(found) ||
-                Number.isFinite(notFound);
+                Number.isFinite(notFound));
 
             if (Number.isFinite(total)) liveJobRuntime.total = total;
             if (Number.isFinite(processed)) liveJobRuntime.processed = processed;
@@ -426,6 +458,8 @@ export function mapOperationLabel(operation) {
             return "Проверка";
         case "delete":
             return "Удаление";
+        case "aftercool_sync":
+            return "Синхронизация Aftercool";
         default:
             return "Задача";
     }

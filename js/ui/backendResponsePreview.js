@@ -206,6 +206,8 @@ function operationLabel(operation) {
             return "Проверка";
         case "delete":
             return "Удаление";
+        case "aftercool_sync":
+            return "Синхронизация Aftercool";
         default:
             return "Операция";
     }

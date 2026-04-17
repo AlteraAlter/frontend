@@ -191,6 +191,22 @@ export function initFileSelect({
     bindFileInput();
 }
 
+export async function startOperationRequest({
+    operation,
+    controllers = [],
+    triggerButton = null,
+} = {}) {
+    await sendRequest({
+        operation,
+        file: null,
+        statusNode: null,
+        confirmButton: triggerButton,
+        backButton: null,
+        onSuccess: null,
+        controllers,
+    });
+}
+
 async function sendRequest({
     operation,
     file,
@@ -212,7 +228,8 @@ async function sendRequest({
         return;
     }
 
-    if (!file) {
+    const requiresFile = operationConfig.requiresFile !== false;
+    if (requiresFile && !file) {
         if (statusNode) statusNode.textContent = "No file selected";
         return;
     }
@@ -234,7 +251,7 @@ async function sendRequest({
 
     const initProgressSocket = getProgressSocketInitializer(operation);
     // Delete receives job_id from backend response, upload/check generate it client-side.
-    const usePostJobIdFlow = operation === "delete";
+    const usePostJobIdFlow = operation === "delete" || operation === "aftercool_sync";
     const requestJobId = usePostJobIdFlow ? null : crypto.randomUUID();
     let progressSocket = null;
     const selectedController = Array.isArray(controllers) ? (controllers.find(Boolean) || DEFAULT_CONTROLLER) : DEFAULT_CONTROLLER;
@@ -391,6 +408,8 @@ function getProgressSocketInitializer(operation) {
             return initCheckProgressSocket;
         case "delete":
             return initDeleteProgressSocket;
+        case "aftercool_sync":
+            return initCheckProgressSocket;
         default:
             return initUploadProgressSocket;
     }

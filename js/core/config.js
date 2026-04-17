@@ -41,6 +41,7 @@ export const ENDPOINTS = {
     check: `${BASE_URL}/api/kaufland_main/`,
     delete: `${BASE_URL}/api/kaufland_main/`,
     stopJob: `${BASE_URL}/api/kaufland_main/stop_job/`,
+    aftercoolSync: `${BASE_URL}/api/aftercool_login/`,
 };
 
 export const WS_ENDPOINTS = {
