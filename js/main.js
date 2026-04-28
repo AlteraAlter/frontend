@@ -4,7 +4,6 @@ import { initCheckModal } from "./modules/modals/checkModal.js";
 import { initDeleteModal } from "./modules/modals/deleteModal.js";
 import { initAftercoolSyncAction } from "./modules/actions/aftercoolSyncAction.js";
 import { renderMetricCards } from "./ui/cards.js";
-import { initLogsPanel } from "./ui/logsPanel.js";
 
 // Bootstraps all UI modules once the static page is ready.
 document.addEventListener("DOMContentLoaded", () => {
@@ -14,5 +13,4 @@ document.addEventListener("DOMContentLoaded", () => {
     initDeleteModal();
     initAftercoolSyncAction();
     renderMetricCards();
-    initLogsPanel();
 });

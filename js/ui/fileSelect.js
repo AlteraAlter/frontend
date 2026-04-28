@@ -1,13 +1,8 @@
-﻿import { sendFileRequest, getOperationConfig, stopJobRequest } from "../services/api.js";
-import { initUploadProgressSocket } from "../modules/ws/uploadProgressSocket.js";
-import { initCheckProgressSocket } from "../modules/ws/checkProgressSocket.js";
-import { initDeleteProgressSocket } from "../modules/ws/deleteProgressSocket.js";
+import { sendFileRequest, getOperationConfig } from "../services/api.js";
 import {
     applyTaskSummaryFromResponse,
-    mapOperationLabel,
     resetTaskUi,
     showTaskStatus,
-    handleBackendStatusMessage,
 } from "./taskStatus.js";
 import { setMetricCardValue } from "./cards.js";
 import { setProgressBarRunning } from "./progressBarStatus.js";
@@ -15,15 +10,11 @@ import {
     clearBackendResponsePreview,
     renderBackendResponsePreview,
 } from "./backendResponsePreview.js";
-import { addLog } from "./logsPanel.js";
 import {
     bindControllerSelector,
     DEFAULT_CONTROLLER,
     renderControllerSelectorMarkup,
 } from "./controllerSelect.js";
-
-let activeTask = null;
-let stopButtonBound = false;
 
 // Shared uploader/checker/deleter file flow used by all action modals.
 export function initFileSelect({
@@ -174,7 +165,6 @@ export function initFileSelect({
             selectedFile = file;
 
             if (jsonOnly && jsonCountCardKey) {
-                // Let the backend report totals (unique items) via websocket.
                 setMetricCardValue(jsonCountCardKey, 0);
             }
             renderConfirm(fileName);
@@ -216,15 +206,9 @@ async function sendRequest({
     onSuccess,
     controllers = [],
 }) {
-    ensureStopButtonBinding();
-    detachPreviousTask();
-
     const operationConfig = operation ? getOperationConfig(operation) : null;
-    if (!operationConfig) {
+    if (!operationConfig || operationConfig.disabled) {
         if (statusNode) statusNode.textContent = "Unknown operation";
-        return;
-    }
-    if (operationConfig.disabled) {
         return;
     }
 
@@ -234,38 +218,16 @@ async function sendRequest({
         return;
     }
 
-    if (statusNode) statusNode.textContent = "Uploading file...";
+    if (statusNode) statusNode.textContent = "Sending request...";
     if (confirmButton) confirmButton.disabled = true;
     if (backButton) backButton.disabled = true;
     clearBackendResponsePreview();
 
-    showTaskStatus({
-        hasTask: true,
-    });
+    showTaskStatus({ hasTask: true });
     resetTaskUi({ total: 0, running: true });
-    addLog(`${mapOperationLabel(operation)} started`);
 
     if (typeof onSuccess === "function") {
         onSuccess({ operation });
-    }
-
-    const initProgressSocket = getProgressSocketInitializer(operation);
-    // Delete receives job_id from backend response, upload/check generate it client-side.
-    const usePostJobIdFlow = operation === "delete" || operation === "aftercool_sync";
-    const requestJobId = usePostJobIdFlow ? null : crypto.randomUUID();
-    let progressSocket = null;
-    const selectedController = Array.isArray(controllers) ? (controllers.find(Boolean) || DEFAULT_CONTROLLER) : DEFAULT_CONTROLLER;
-
-    if (!usePostJobIdFlow) {
-        progressSocket = initProgressSocket(
-            createProgressSocketHandlers({ operation, jobId: requestJobId })
-        );
-        setActiveTask({
-            operation,
-            jobId: requestJobId,
-            controller: selectedController,
-            socket: progressSocket,
-        });
     }
 
     try {
@@ -273,7 +235,6 @@ async function sendRequest({
             operation,
             file,
             token: localStorage.getItem("jwt_access"),
-            jobId: requestJobId,
             controllers,
         });
         const responseBody = await parseResponseBody(response);
@@ -284,54 +245,32 @@ async function sendRequest({
             throw new Error(backendError || `Request failed with status ${code}`);
         }
 
-        if (usePostJobIdFlow) {
-            const wsJobId = extractWsJobId(responseBody);
-            if (wsJobId) {
-                clearBackendResponsePreview();
-                progressSocket = initProgressSocket(
-                    createProgressSocketHandlers({ operation, jobId: wsJobId })
-                );
-                setActiveTask({
-                    operation,
-                    jobId: wsJobId,
-                    controller: selectedController,
-                    socket: progressSocket,
-                });
-                if (statusNode) statusNode.textContent = "Task started";
-                addLog(`${mapOperationLabel(operation)} accepted. Job ID: ${wsJobId}`);
-                return;
-            }
-            applyTaskSummaryFromResponse({
+        const previewPayload = normalizePreviewPayload(responseBody);
+        if (previewPayload) {
+            renderBackendResponsePreview({
                 operation,
-                payload: responseBody,
+                payload: previewPayload,
             });
-            setProgressBarRunning(false);
-            clearActiveTask();
         }
 
-        if (!usePostJobIdFlow) {
-            const acceptedJobId = extractWsJobId(responseBody) || requestJobId;
-            if (statusNode) statusNode.textContent = "Task started";
-            if (acceptedJobId) {
-                addLog(`${mapOperationLabel(operation)} accepted. Job ID: ${acceptedJobId}`);
-            }
-        } else if (statusNode) {
-            statusNode.textContent = "File uploaded";
+        applyTaskSummaryFromResponse({
+            operation,
+            payload: previewPayload || responseBody,
+        });
+
+        const responseMessage =
+            responseBody && typeof responseBody === "object"
+                ? String(responseBody.message || "").trim()
+                : "";
+        if (statusNode) {
+            statusNode.textContent = responseMessage || "Request accepted";
         }
     } catch (error) {
         console.error(error);
-        if (statusNode) statusNode.textContent = "File upload failed";
-        setProgressBarRunning(false);
-        showTaskStatus({
-            hasTask: true,
-            message: "File upload failed",
-        });
-        addLog(`${mapOperationLabel(operation)} request failed: ${error?.message || "unknown error"}`, "error");
-        if (progressSocket && progressSocket.readyState === WebSocket.OPEN) {
-            progressSocket.close();
-        }
-        clearActiveTask();
+        if (statusNode) statusNode.textContent = "Request failed";
+        showTaskStatus({ hasTask: true, message: "Request failed" });
     } finally {
+        setProgressBarRunning(false);
         if (confirmButton) confirmButton.disabled = false;
         if (backButton) backButton.disabled = false;
     }
@@ -356,16 +295,6 @@ function extractBackendError(payload) {
     return null;
 }
 
-async function normalizeWsData(data) {
-    if (data instanceof Blob) {
-        return await data.text();
-    }
-    if (data instanceof ArrayBuffer) {
-        return new TextDecoder().decode(data);
-    }
-    return data;
-}
-
 async function parseResponseBody(response) {
     if (!response) return null;
     const contentType = response.headers.get("content-type") || "";
@@ -381,175 +310,23 @@ async function parseResponseBody(response) {
     }
 }
 
-function parseSocketMessage(rawData) {
-    if (rawData == null) return null;
-    if (typeof rawData !== "string") {
-        return typeof rawData === "object" ? rawData : null;
-    }
-    try {
-        return JSON.parse(rawData);
-    } catch {
-        return null;
-    }
-}
-
-function extractSocketJobId(payload) {
-    if (!payload || typeof payload !== "object") return null;
-    const value = payload.job_id ?? payload.jobId ?? payload.payload?.job_id ?? null;
-    const normalized = String(value || "").trim();
-    return normalized || null;
-}
-
-function getProgressSocketInitializer(operation) {
-    switch (operation) {
-        case "upload":
-            return initUploadProgressSocket;
-        case "check":
-            return initCheckProgressSocket;
-        case "delete":
-            return initDeleteProgressSocket;
-        case "aftercool_sync":
-            return initCheckProgressSocket;
-        default:
-            return initUploadProgressSocket;
-    }
-}
-
-function createProgressSocketHandlers({ operation, jobId }) {
-    const ignoredForeignJobIds = new Set();
-
-    return {
-        jobId,
-        onOpen: () => {
-            addLog(`${mapOperationLabel(operation)} websocket connected`);
-        },
-        onMessage: async (event) => {
-            const data = await normalizeWsData(event.data);
-            const parsed = parseSocketMessage(data);
-            const incomingJobId = extractSocketJobId(parsed);
-            if (jobId && incomingJobId && incomingJobId !== jobId) {
-                if (!ignoredForeignJobIds.has(incomingJobId)) {
-                    ignoredForeignJobIds.add(incomingJobId);
-                    addLog(
-                        `${mapOperationLabel(operation)} ignored websocket event for foreign job ${incomingJobId}`,
-                        "warn"
-                    );
-                }
-                return;
-            }
-
-            const result = handleBackendStatusMessage(parsed || data);
-            if (Object.prototype.hasOwnProperty.call(result || {}, "previewPayload")) {
-                // Keep the "backend response preview" table in sync with incremental websocket events.
-                if (
-                    (operation === "upload" || operation === "delete") &&
-                    Array.isArray(result.previewPayload) &&
-                    result.previewPayload.length === 0
-                ) {
-                    clearBackendResponsePreview();
-                } else {
-                    renderBackendResponsePreview({
-                        operation,
-                        payload: result.previewPayload,
-                    });
-                }
-            }
-            if (result?.done && event?.target) {
-                event.target.close();
-                clearActiveTask();
-            }
-        },
-        onError: () => {
-            setProgressBarRunning(false);
-            showTaskStatus({
-                hasTask: true,
-                message: "Connection error",
-            });
-            addLog(`${mapOperationLabel(operation)} websocket error`, "error");
-        },
-        onClose: (event) => {
-            const code = Number(event?.code);
-            const reason = String(event?.reason || "").trim();
-            const clean = Boolean(event?.wasClean);
-            const parts = [];
-            if (Number.isFinite(code)) parts.push(`code=${code}`);
-            if (reason) parts.push(`reason=${reason}`);
-            parts.push(clean ? "clean=true" : "clean=false");
-            addLog(`${mapOperationLabel(operation)} websocket closed${parts.length ? ` (${parts.join(", ")})` : ""}`);
-        },
-    };
-}
-
-function extractWsJobId(responseBody) {
+function normalizePreviewPayload(responseBody) {
+    if (Array.isArray(responseBody)) return responseBody;
     if (!responseBody || typeof responseBody !== "object") return null;
-    const candidate = responseBody.job_id || responseBody.jobId || null;
-    const value = String(candidate || "").trim();
-    return value || null;
-}
 
-function ensureStopButtonBinding() {
-    if (stopButtonBound) return;
-    const button = document.getElementById("stopTaskBtn");
-    if (!button) return;
-    button.addEventListener("click", () => {
-        requestStopActiveTask();
-    });
-    stopButtonBound = true;
-}
+    if (Array.isArray(responseBody.results)) return responseBody.results;
+    if (Array.isArray(responseBody.result)) return responseBody.result;
 
-function setActiveTask(task) {
-    activeTask = {
-        operation: task.operation,
-        jobId: task.jobId,
-        controller: task.controller,
-        socket: task.socket || null,
-        stopRequested: false,
-    };
-    setStopButtonEnabled(true);
-}
-
-function clearActiveTask() {
-    activeTask = null;
-    setStopButtonEnabled(false);
-}
-
-function detachPreviousTask() {
-    if (!activeTask) return;
-    try {
-        if (activeTask.socket && typeof activeTask.socket.close === "function") {
-            activeTask.socket.close(1000, "replaced_by_new_task");
-        }
-    } catch (error) {
-        console.error(error);
-    } finally {
-        clearActiveTask();
+    // Preserve current preview behavior for single-result shaped responses.
+    if (
+        responseBody.ean ||
+        responseBody.title ||
+        responseBody.price != null ||
+        responseBody.storefront ||
+        responseBody.status
+    ) {
+        return [responseBody];
     }
-}
 
-function setStopButtonEnabled(enabled) {
-    const button = document.getElementById("stopTaskBtn");
-    if (!button) return;
-    button.disabled = !enabled;
-}
-
-async function requestStopActiveTask() {
-    if (!activeTask || !activeTask.jobId) return;
-    if (activeTask.stopRequested) return;
-
-    activeTask.stopRequested = true;
-    setStopButtonEnabled(false);
-    setProgressBarRunning(false);
-    addLog(`Stop requested for job ${activeTask.jobId}`, "warn");
-
-    try {
-        await stopJobRequest({
-            jobId: activeTask.jobId,
-            token: localStorage.getItem("jwt_access"),
-        });
-        addLog(`Stop signal sent for job ${activeTask.jobId}`, "warn");
-    } catch (error) {
-        addLog(`Failed to stop job ${activeTask.jobId}: ${error?.message || "unknown error"}`, "error");
-        activeTask.stopRequested = false;
-        setStopButtonEnabled(true);
-    }
+    return null;
 }

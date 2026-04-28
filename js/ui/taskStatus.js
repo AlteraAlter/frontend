@@ -6,7 +6,8 @@ import {
     setProgressBarStatus,
 } from "./progressBarStatus.js";
 import { qs } from "../core/dom.js"
-import { addLog } from "./logsPanel.js";
+
+const addLog = () => {};
 
 let liveJobRuntime = createEmptyRuntime();
 
@@ -354,8 +355,15 @@ export function handleBackendStatusMessage(raw) {
                 });
                 return { done: false };
             }
-            if (stage) {
-                addLog(`⚙️ ${ean ? `EAN ${ean}: ` : ""}${formatStageLabel(stage)}`);
+            if (stage === "create_product_body") {
+                const body = payload.extra?.body;
+                if (body && typeof body === "object") {
+                    addLog(
+                        `📦 Product body ${ean ? `(EAN ${ean}) ` : ""}${JSON.stringify(body)}`
+                    );
+                } else {
+                    addLog(`📦 Product body ${ean ? `(EAN ${ean})` : ""}`);
+                }
             }
             showTaskStatus({
                 hasTask: true,

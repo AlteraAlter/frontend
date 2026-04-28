@@ -497,10 +497,7 @@
                                 <h3 class="text-h3 text-foreground">Прогресс обработки</h3>
                                 <span class="progress-spinner" data-progress-spinner aria-hidden="true"></span>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <span class="text-body text-muted-foreground" data-progress-text>0 / 0 processed</span>
-                                <button type="button" class="progress-stop-btn" id="stopTaskBtn" disabled>Stop</button>
-                            </div>
+                            <span class="text-body text-muted-foreground" data-progress-text>0 / 0 processed</span>
                         </div>
                         <div aria-valuemax="100" aria-valuemin="0" role="progressbar" data-state="indeterminate"
                             data-max="100" class="relative w-full overflow-hidden rounded-full bg-secondary h-3 mb-4"
@@ -542,18 +539,6 @@
             </div>
         </main>
     </div>
-    <section class="logs-panel" id="logsPanel" data-expanded="false">
-        <div class="logs-resize-handle" id="logsResizeHandle" aria-hidden="true"></div>
-        <div class="logs-header">
-            <span class="logs-title">Logs</span>
-            <div class="logs-actions">
-                <button type="button" id="logsClearBtn" class="logs-btn">Clear</button>
-                <button type="button" id="logsToggleBtn" class="logs-btn">Expand</button>
-            </div>
-        </div>
-        <ul class="logs-list" id="logsList"></ul>
-    </section>
-
     <script type="module" src="js/main.js"></script>
 </body>
 

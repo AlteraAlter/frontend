@@ -14,12 +14,6 @@ function getBaseUrl() {
     return "http://127.0.0.1:8050";
 }
 
-function toWsBaseUrl(httpBaseUrl) {
-    const url = new URL(normalizeBaseUrl(httpBaseUrl));
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return stripTrailingSlash(url.toString());
-}
-
 function normalizeBaseUrl(value) {
     const trimmed = stripTrailingSlash(value);
     if (/^https?:\/\//i.test(trimmed)) return trimmed;
@@ -34,18 +28,10 @@ function stripTrailingSlash(value) {
 }
 
 export const BASE_URL = getBaseUrl();
-export const WS_BASE_URL = toWsBaseUrl(BASE_URL);
 
 export const ENDPOINTS = {
     upload: `${BASE_URL}/api/kaufland_main/upload_json/`,
     check: `${BASE_URL}/api/kaufland_main/`,
     delete: `${BASE_URL}/api/kaufland_main/`,
-    stopJob: `${BASE_URL}/api/kaufland_main/stop_job/`,
     aftercoolSync: `${BASE_URL}/api/aftercool_login/`,
-};
-
-export const WS_ENDPOINTS = {
-    uploadProgress: "/ws/upload-progress/",
-    checkerProgress: "/ws/checker-progress",
-    deleteProgress: "/ws/delete-progress",
 };

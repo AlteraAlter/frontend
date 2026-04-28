@@ -5,9 +5,8 @@ const OPERATION_CONFIG = {
     upload: {
         endpoint: ENDPOINTS.upload,
         requiresFile: true,
-        buildFormData: (formData, file, jobId, controllers) => {
+        buildFormData: (formData, file, controllers) => {
             formData.append("file", file);
-            appendJobId(formData, jobId);
             formData.append("mode", "upload_collection");
             appendController(formData, controllers);
         },
@@ -15,9 +14,8 @@ const OPERATION_CONFIG = {
     check: {
         endpoint: ENDPOINTS.check,
         requiresFile: true,
-        buildFormData: (formData, file, jobId, controllers) => {
+        buildFormData: (formData, file, controllers) => {
             formData.append("file", file);
-            appendJobId(formData, jobId);
             formData.append("mode", "checker");
             appendController(formData, controllers);
         },
@@ -25,7 +23,7 @@ const OPERATION_CONFIG = {
     delete: {
         endpoint: ENDPOINTS.delete,
         requiresFile: true,
-        buildFormData: (formData, file, jobId, controllers) => {
+        buildFormData: (formData, file, controllers) => {
             formData.append("file", file);
             formData.append("mode", "delete");
             appendController(formData, controllers);
@@ -42,7 +40,7 @@ export function getOperationConfig(operation) {
     return OPERATION_CONFIG[operation] || null;
 }
 
-export async function sendFileRequest({ operation, file, token, jobId, controllers = [] }) {
+export async function sendFileRequest({ operation, file, token, controllers = [] }) {
     const config = getOperationConfig(operation);
     if (!config || config.disabled) return null;
 
@@ -59,7 +57,7 @@ export async function sendFileRequest({ operation, file, token, jobId, controlle
 
     if (method !== "GET") {
         const formData = new FormData();
-        config.buildFormData(formData, file, jobId, controllers);
+        config.buildFormData(formData, file, controllers);
         requestInit.body = formData;
     }
 
@@ -85,25 +83,6 @@ export async function sendEanRequest({ ean, token, controllers = [] }) {
         body: JSON.stringify(payload),
     });
     return response;
-}
-
-export async function stopJobRequest({ jobId, token }) {
-    if (!jobId) return null;
-    const response = await fetch(ENDPOINTS.stopJob, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ job_id: String(jobId) }),
-    });
-    return response;
-}
-
-// Upload/check flows may include client-side job_id so websocket updates can be attached immediately.
-function appendJobId(formData, jobId) {
-    if (!jobId) return;
-    formData.append("job_id", jobId);
 }
 
 // Backend accepts one controller value; UI keeps it as an array for shared modal logic.
